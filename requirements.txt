@@ -1,0 +1,10 @@
+# Pin exact versions (pip freeze) once installed.
+fastapi
+uvicorn
+langchain-openai
+langgraph
+langchain-mcp-adapters
+mcp
+httpx
+pytest
+pytest-asyncio

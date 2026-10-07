@@ -1,0 +1,20 @@
+{
+  "market_data": {
+    "transport": "stdio",
+    "command": "python",
+    "args": ["mcp_servers/market_data.py"],
+    "env": {"FINNHUB_API_KEY": "${FINNHUB_API_KEY}"}
+  },
+  "fred": {
+    "transport": "stdio",
+    "command": "python",
+    "args": ["mcp_servers/fred.py"],
+    "env": {"FRED_API_KEY": "${FRED_API_KEY}"}
+  },
+  "tavily": {
+    "transport": "stdio",
+    "command": "npx",
+    "args": ["-y", "tavily-mcp"],
+    "env": {"TAVILY_API_KEY": "${TAVILY_API_KEY}"}
+  }
+}
