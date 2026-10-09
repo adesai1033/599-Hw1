@@ -14,14 +14,14 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Literal
 
 import httpx
-from mcp.server.mcpserver import MCPServer
-from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 
 logger = logging.getLogger("fred")
 # httpx logs full request URLs at INFO, and our URLs carry the API key in the query string.
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-mcp = MCPServer("fred")
+mcp = FastMCP("fred")
 
 FRED_URL = "https://api.stlouisfed.org/fred"
 CACHE_TTL_SECONDS = 3600

@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import httpx
 import pytest
-from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.fastmcp.exceptions import ToolError
 
 from mcp_servers import fred
 
@@ -357,5 +357,5 @@ async def test_api_key_never_logged(up, caplog):
 async def test_server_registers_exactly_three_tools():
     tools = {t.name: t for t in await fred.mcp.list_tools()}
     assert set(tools) == {"get_series", "search_series", "get_macro_snapshot"}
-    assert tools["get_series"].input_schema["properties"]["period"]["enum"] == ["1m", "3m", "6m", "1y", "5y", "10y"]
-    assert tools["get_macro_snapshot"].input_schema.get("required", []) == []
+    assert tools["get_series"].inputSchema["properties"]["period"]["enum"] == ["1m", "3m", "6m", "1y", "5y", "10y"]
+    assert tools["get_macro_snapshot"].inputSchema.get("required", []) == []

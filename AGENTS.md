@@ -19,7 +19,7 @@ Every tool returns live data.
 | MCP client | `langchain-mcp-adapters` → `MultiServerMCPClient` |
 | HTTP | FastAPI + uvicorn, `POST /chat` |
 | Memory | `langgraph.checkpoint.memory.MemorySaver`, `thread_id = session_id` |
-| MCP server framework (ours) | `mcp` Python SDK 2.x (`MCPServer`, formerly `FastMCP`), stdio transport |
+| MCP server framework (ours) | FastMCP (`mcp` Python SDK 1.x), stdio transport |
 | Deployment | Docker (multi-stage, non-root) → Cloud Run, `us-west1`, `--max-instances 1` |
 
 ## MCP servers

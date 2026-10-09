@@ -1,6 +1,10 @@
-# Stage 1 (market_data server) pins. Add the agent/API dependencies and pin them when installed.
-mcp==2.3.0
+# mcp stays on 1.x: langchain-mcp-adapters 0.3.x does not import against mcp 2.x.
+mcp==1.30.0
 httpx==0.28.1
 yfinance==1.7.0
+langgraph==1.2.14
+langchain-openai==1.7.0
+langchain-mcp-adapters==0.3.2
+langchain-core==1.6.9
 pytest==9.1.1
 pytest-asyncio==1.4.0

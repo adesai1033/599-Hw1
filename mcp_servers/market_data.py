@@ -14,16 +14,14 @@ from typing import Any, Literal
 
 import httpx
 import yfinance
-
-# mcp 2.x renamed FastMCP to MCPServer and moved it (and ToolError) to mcp.server.mcpserver.
-from mcp.server.mcpserver import MCPServer
-from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 
 logger = logging.getLogger("market_data")
 # httpx logs full request URLs at INFO, and our URLs carry API keys in the query string.
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-mcp = MCPServer("market_data")
+mcp = FastMCP("market_data")
 
 FINNHUB_URL = "https://finnhub.io/api/v1"
 TWELVEDATA_URL = "https://api.twelvedata.com"
@@ -257,10 +255,13 @@ async def _history(symbol: str, period: str) -> dict[str, Any]:
 
 async def _build_quote(symbol: str) -> dict[str, Any]:
     data = await _fetch_finnhub("/quote", {"symbol": symbol})
-    if not isinstance(data, dict) or not all(_is_num(data.get(f)) for f in QUOTE_FIELDS):
+    if not isinstance(data, dict):
         raise _malformed("finnhub", symbol)
-    if data["c"] == 0 and data["pc"] == 0:
+    # Unknown symbols come back as c=0, pc=0 with d and dp null, so check this before field types.
+    if data.get("c") == 0 and data.get("pc") == 0:
         raise ToolError(f"No quote found for {symbol}. It may be delisted or not a US-listed ticker.")
+    if not all(_is_num(data.get(f)) for f in QUOTE_FIELDS):
+        raise _malformed("finnhub", symbol)
     quote: dict[str, Any] = {
         "symbol": symbol,
         "price": round(data["c"], 2),

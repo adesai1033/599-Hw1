@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import httpx
 import pytest
-from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.fastmcp.exceptions import ToolError
 
 from mcp_servers import market_data as md
 
@@ -135,6 +135,12 @@ async def test_quote_normalizes_symbol(up):
 
 async def test_quote_unknown_symbol(up):
     up.on("quote", {k: 0 for k in QUOTE})
+    with pytest.raises(ToolError, match="No quote found"):
+        await md.get_quote("ZZZZQ")
+
+
+async def test_quote_unknown_symbol_with_null_change_fields(up):
+    up.on("quote", {"c": 0, "d": None, "dp": None, "h": 0, "l": 0, "o": 0, "pc": 0, "t": 0})
     with pytest.raises(ToolError, match="No quote found"):
         await md.get_quote("ZZZZQ")
 
@@ -426,4 +432,4 @@ async def test_server_registers_exactly_five_tools():
     tools = {t.name: t for t in await md.mcp.list_tools()}
     assert set(tools) == {"get_quote", "get_price_history", "compare_performance", "get_company_profile", "get_company_news"}
     for name in ("get_price_history", "compare_performance"):
-        assert tools[name].input_schema["properties"]["period"]["enum"] == ["1w", "1m", "3m", "6m", "1y"]
+        assert tools[name].inputSchema["properties"]["period"]["enum"] == ["1w", "1m", "3m", "6m", "1y"]
