@@ -47,7 +47,7 @@ Server manifests live in `mcp_config.json`. The path is passed to the app via
 ## Repository layout
 
 ```
-main.py              FastAPI app, /chat endpoint, reads PORT (default 8083), binds 0.0.0.0
+main.py              FastAPI app, /chat + /health, reads PORT (default 8080 per PDF; `.env` sets 8083 locally), binds 0.0.0.0
 agent.py             LangGraph graph: agent node, tools node, conditional edge, MemorySaver
 mcp_client.py        MultiServerMCPClient setup, tool discovery, transport-failure handling
 mcp_servers/

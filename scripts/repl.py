@@ -12,7 +12,7 @@ from agent import ask, build_agent  # noqa: E402
 
 
 async def main(servers: set[str], session: str) -> None:
-    graph, unavailable = await build_agent(os.environ.get("MCP_SERVERS_CONFIG", "mcp_config.json"), servers)
+    graph, unavailable, _ = await build_agent(os.environ.get("MCP_SERVERS_CONFIG", "mcp_config.json"), servers)
     if unavailable:
         print("servers that failed to start:", ", ".join(f"{name} ({text})" for name, text in unavailable.items()))
     while True:

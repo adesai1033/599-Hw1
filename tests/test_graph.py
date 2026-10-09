@@ -13,48 +13,21 @@ import time
 from pathlib import Path
 
 import pytest
-from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import MemorySaver
-from pydantic import Field
 
 import agent
 import mcp_client
 from agent import EMPTY_ANSWER, RECURSION_ANSWER, SYSTEM_PROMPT, ask, build_graph, system_message
 from mcp_client import discover_tools, load_config
 from mcp_servers import market_data
+from tests.conftest import ScriptedChatModel, call
 
 pytestmark = pytest.mark.asyncio
 
 ROOT = Path(__file__).resolve().parent.parent
 MARKET_DATA_TOOLS = {"get_quote", "get_price_history", "compare_performance", "get_company_profile", "get_company_news"}
-
-
-class ScriptedChatModel(BaseChatModel):
-    script: list[AIMessage]
-    calls: list = Field(default_factory=list)
-    bound_tools: list = Field(default_factory=list)
-    cursor: int = 0
-
-    @property
-    def _llm_type(self) -> str:
-        return "scripted"
-
-    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-        self.calls.append(list(messages))
-        message = self.script[self.cursor]
-        self.cursor += 1
-        return ChatResult(generations=[ChatGeneration(message=message)])
-
-    def bind_tools(self, tools, **kwargs):
-        self.bound_tools = list(tools)
-        return self
-
-
-def call(name, symbol, call_id):
-    return AIMessage("", tool_calls=[{"name": name, "args": {"symbol": symbol}, "id": call_id}])
 
 
 @pytest.fixture(autouse=True)

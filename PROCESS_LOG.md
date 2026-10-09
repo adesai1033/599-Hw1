@@ -41,6 +41,18 @@ quote for ZZZZQ                   -> tool_result name=get_quote status=error cha
 - **Variance:** the first run reused an earlier macro snapshot for the "rates" question and asked a clarifying question for the yield query. Tool selection is not fully deterministic.
 - **Failure probes:** an invalid Tavily key is rejected at the handshake and the other servers keep working. With `fred` pointed at a missing command, startup logs one ERROR and 7 tools remain. In both cases the model invented no numbers, but it never said the data was unavailable and offered to fetch things it had no tool for, because it doesn't know a server is down.
 
+## 2026-10-09: Telling the model what's down (Stage 4b)
+- Each server in `mcp_config.json` now has a `description`. When discovery fails, `discover_tools` returns `{server: description}` and the system message gets one appended sentence listing what's unavailable. Before this, the model offered to fetch data it had no tool for.
+- First wording ("say plainly that the data source is unavailable") was ignored: the model filled the gap with web search and never mentioned the outage. Rewording to "begin your answer by saying plainly that this data is unavailable" worked in the live probe with `fred` broken. Prompt wording matters more than adding the information.
+
+## 2026-10-09: HTTP layer and failure-mode tests (Stage 5)
+- `main.py`: `create_app(config_path, llm)` factory, `POST /chat` with the PDF contract (`query`/`session_id` in, `response` out), `GET /health`, `PORT` default 8080. A missing `OPENAI_API_KEY` fails startup loudly; MCP failures never do.
+- `/chat` always returns 200 for runtime trouble: a timeout or any other exception gives a graceful sentence, and the traceback goes to the log. Bad request bodies stay 422.
+- Added two deliberately misbehaving test servers (one that exits mid-call and prints garbage, one that returns an off-schema result). The three rubric failure modes (transport, tool error, malformed response) are now proven through the real HTTP stack with a scripted LLM. 125 tests pass.
+- `build_agent` now also returns the tool names so `/health` can list them.
+- The adapter's error text for the off-schema case differed from what I expected (`ToolInvocationError ... Input should be a valid list`), so I asserted on the real wording.
+- **Live smoke test** (real keys): `/health` shows 3 servers up and 10 tools; the six-month follow-up reused TSLA and RIVN from session memory; `ZZZZQ` gave a graceful sentence with HTTP 200; a missing `session_id` gave 422.
+
 ## Prompting: what worked vs. what didn't
 **Worked**
 - Staged prompts, one file each, with AGENTS.md pasted first. The model stayed in scope and `market_data.py` served as the template for `fred.py`.
@@ -57,6 +69,6 @@ quote for ZZZZQ                   -> tool_result name=get_quote status=error cha
 - Bare "push" left the commit message unspecified. It's better to say the message up front.
 
 ## Still to do
-- Tell the model which servers failed (append them to the system prompt) so it can say "web search/macro data is unavailable".
 - Live-test FRED and Twelve Data on their own (FRED history ran through the agent, not standalone).
-- `main.py` with the `/chat` endpoint, the failure-mode tests (`tests/test_failures.py`), Dockerfile (Python-only now), README, deploy.
+- Dockerfile (Python-only, non-root), `deploy.sh` run, README with diagrams, cost disclosure and Tavily attribution.
+- Deploy to Cloud Run and re-run the smoke test against the public URL.

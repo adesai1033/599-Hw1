@@ -117,7 +117,9 @@ async def ask(graph: CompiledStateGraph, query: str, session_id: str, recursion_
 
 
 async def build_agent(
-    config_path: str | Path, include: set[str] | None = None
-) -> tuple[CompiledStateGraph, dict[str, str]]:
+    config_path: str | Path, include: set[str] | None = None, llm: BaseChatModel | None = None
+) -> tuple[CompiledStateGraph, dict[str, str], list[str]]:
+    """Return (graph, {unavailable server: description}, discovered tool names)."""
     tools, unavailable = await discover_tools(load_config(config_path, include))
-    return build_graph(tools, build_llm(), unavailable=unavailable), unavailable
+    graph = build_graph(tools, llm or build_llm(), unavailable=unavailable)
+    return graph, unavailable, [tool.name for tool in tools]
