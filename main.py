@@ -12,11 +12,11 @@ app = FastAPI(title="Market Watcher")
 
 class ChatRequest(BaseModel):
     session_id: str
-    message: str
+    query: str
 
 
 class ChatResponse(BaseModel):
-    answer: str
+    response: str
 
 
 @app.post("/chat", response_model=ChatResponse)

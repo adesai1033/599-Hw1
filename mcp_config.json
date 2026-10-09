@@ -3,7 +3,10 @@
     "transport": "stdio",
     "command": "python",
     "args": ["mcp_servers/market_data.py"],
-    "env": {"FINNHUB_API_KEY": "${FINNHUB_API_KEY}"}
+    "env": {
+      "FINNHUB_API_KEY": "${FINNHUB_API_KEY}",
+      "TWELVEDATA_API_KEY": "${TWELVEDATA_API_KEY}"
+    }
   },
   "fred": {
     "transport": "stdio",
