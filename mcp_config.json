@@ -15,9 +15,9 @@
     "env": {"FRED_API_KEY": "${FRED_API_KEY}"}
   },
   "tavily": {
-    "transport": "stdio",
-    "command": "npx",
-    "args": ["-y", "tavily-mcp"],
-    "env": {"TAVILY_API_KEY": "${TAVILY_API_KEY}"}
+    "transport": "streamable_http",
+    "url": "https://mcp.tavily.com/mcp/",
+    "headers": {"Authorization": "Bearer ${TAVILY_API_KEY}"},
+    "tools": ["tavily_search", "tavily_extract"]
   }
 }

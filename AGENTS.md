@@ -20,6 +20,7 @@ Every tool returns live data.
 | HTTP | FastAPI + uvicorn, `POST /chat` |
 | Memory | `langgraph.checkpoint.memory.MemorySaver`, `thread_id = session_id` |
 | MCP server framework (ours) | FastMCP (`mcp` Python SDK 1.x), stdio transport |
+| MCP transports | stdio (market_data, fred), streamable HTTP (tavily) |
 | Deployment | Docker (multi-stage, non-root) → Cloud Run, `us-west1`, `--max-instances 1` |
 
 ## MCP servers
@@ -34,8 +35,11 @@ Every tool returns live data.
    touching tool signatures.
 2. **`fred`** (ours, `mcp_servers/fred.py`) — wraps the St. Louis Fed FRED API.
    Tools: `get_series(series_id, period)`, `search_series(query)`, `get_macro_snapshot()`. Key from `FRED_API_KEY`.
-3. **`tavily`** (external, official Tavily MCP server) — web/news search. Key from
-   `TAVILY_API_KEY`. We do not modify it; we cite it in the README.
+3. **`tavily`** (external, official hosted Tavily MCP server) — web/news search. Reached
+   over streamable HTTP at `https://mcp.tavily.com/mcp/` with a bearer header built from
+   `TAVILY_API_KEY`. Only `tavily_search` and `tavily_extract` are exposed to the agent
+   (per-server `tools` allowlist in `mcp_config.json`). We do not modify it; we cite it
+   in the README.
 
 Server manifests live in `mcp_config.json`. The path is passed to the app via
 `MCP_SERVERS_CONFIG`.
@@ -51,7 +55,7 @@ mcp_servers/
   fred.py            MCP server (FRED)
 mcp_config.json      three server manifests (command/args/env per server)
 tests/               pytest; see "Verification" below
-Dockerfile           multi-stage, python:3.13-slim, Node for Tavily/npx, non-root appuser
+Dockerfile           multi-stage, python:3.13-slim, non-root appuser
 deploy.sh            gcloud builds submit + gcloud run deploy
 .env.example         placeholder keys only — never real values
 README.md            setup / run / deploy / cost disclosure / three architecture diagrams

@@ -33,6 +33,14 @@ quote for ZZZZQ                   -> tool_result name=get_quote status=error cha
 ```
   Memory worked: the six-month follow-up reused both tickers. The `ZZZZQ` run happened before the null-field fix above, so it quoted "Malformed response".
 
+## 2026-10-09: FRED and Tavily wired in (Stage 4)
+- Switched Tavily from the npm stdio server to the hosted **streamable HTTP** endpoint with a bearer header, so the image no longer needs Node. Added a per-server `tools` allowlist in `mcp_config.json` (a static capability choice, not query routing) so the agent only sees `tavily_search` and `tavily_extract`. Added three paragraphs to the system prompt on choosing between news tools, when to use macro data, and naming web sources.
+- **Tavily tool names:** the hosted server uses underscores (`tavily_search`), not the hyphens from the npm server. With hyphens the allowlist matched nothing and the first live run silently had no web search. The allowlist warning made it easy to spot.
+- Added a `network` pytest marker; 105 tests pass (104 offline).
+- **Live ten-query run, all three servers, 10 tools:** all ten queries matched the selection table on the second run. Highlights: `compare_performance` reused TSLA/RIVN for the six-month follow-up, "stock or rates?" called `get_macro_snapshot`, "10-year yield this year" called `get_series(DGS10, "1y")`, "big market news" called `tavily_search` and cited sources, and the P/E and "what did I ask first" queries made no tool call.
+- **Variance:** the first run reused an earlier macro snapshot for the "rates" question and asked a clarifying question for the yield query. Tool selection is not fully deterministic.
+- **Failure probes:** an invalid Tavily key is rejected at the handshake and the other servers keep working. With `fred` pointed at a missing command, startup logs one ERROR and 7 tools remain. In both cases the model invented no numbers, but it never said the data was unavailable and offered to fetch things it had no tool for, because it doesn't know a server is down.
+
 ## Prompting: what worked vs. what didn't
 **Worked**
 - Staged prompts, one file each, with AGENTS.md pasted first. The model stayed in scope and `market_data.py` served as the template for `fred.py`.
@@ -49,6 +57,6 @@ quote for ZZZZQ                   -> tool_result name=get_quote status=error cha
 - Bare "push" left the commit message unspecified. It's better to say the message up front.
 
 ## Still to do
-- Live-test FRED and Twelve Data with real keys (not done; the `.env` keys are set).
-- Stage 4: wire in FRED and Tavily, then re-run the canonical queries ("stock or rates?" should add a FRED call).
-- `main.py` with the `/chat` endpoint, the failure-mode tests (`tests/test_failures.py`), README, deploy.
+- Tell the model which servers failed (append them to the system prompt) so it can say "web search/macro data is unavailable".
+- Live-test FRED and Twelve Data on their own (FRED history ran through the agent, not standalone).
+- `main.py` with the `/chat` endpoint, the failure-mode tests (`tests/test_failures.py`), Dockerfile (Python-only now), README, deploy.

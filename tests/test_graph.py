@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -242,3 +243,61 @@ async def test_tool_name_collision_raises():
     with pytest.raises(RuntimeError) as excinfo:
         await asyncio.wait_for(discover_tools({"first": base, "second": base}), timeout=60)
     assert "first" in str(excinfo.value) and "second" in str(excinfo.value)
+
+
+async def test_load_config_expands_headers_and_keeps_tools(tmp_path, monkeypatch):
+    manifest = tmp_path / "mcp.json"
+    manifest.write_text(json.dumps({"h": {
+        "transport": "streamable_http", "url": "https://example.test/mcp/",
+        "headers": {"Authorization": "Bearer ${TAVILY_API_KEY}"}, "tools": ["a", "b"],
+    }}))
+    monkeypatch.setenv("TAVILY_API_KEY", "tv-secret")
+    loaded = load_config(manifest)["h"]
+    assert loaded["headers"] == {"Authorization": "Bearer tv-secret"} and loaded["tools"] == ["a", "b"]
+
+
+async def test_allowlist_filters_and_warns_about_missing(caplog):
+    config = load_config("mcp_config.json", include={"market_data"})
+    config["market_data"]["tools"] = ["get_quote", "compare_performance", "not_a_tool"]
+    with caplog.at_level(logging.INFO, logger="mcp_client"):
+        found, failed = await asyncio.wait_for(discover_tools(config), timeout=60)
+    assert [t.name for t in found] == ["get_quote", "compare_performance"] and failed == []
+    warned = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING and "allowlisted" in r.getMessage()]
+    assert len(warned) == 1 and "market_data" in warned[0] and "not_a_tool" in warned[0]
+    assert any("(2 of 5 kept)" in r.getMessage() for r in caplog.records)
+
+
+async def test_real_discovery_of_both_stdio_servers(monkeypatch):
+    for key in ("FINNHUB_API_KEY", "TWELVEDATA_API_KEY", "FRED_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+    config = load_config("mcp_config.json", include={"market_data", "fred"})
+    found, failed = await asyncio.wait_for(discover_tools(config), timeout=60)
+    assert {t.name for t in found} == MARKET_DATA_TOOLS | {"get_series", "search_series", "get_macro_snapshot"}
+    assert len(found) == 8 and failed == []
+
+
+async def test_dead_http_server_is_skipped_quickly(caplog):
+    config = load_config("mcp_config.json", include={"market_data"})
+    config["dead_http"] = {"transport": "streamable_http", "url": "http://127.0.0.1:9/mcp/"}
+    started = time.monotonic()
+    with caplog.at_level(logging.INFO, logger="mcp_client"):
+        found, failed = await asyncio.wait_for(discover_tools(config), timeout=60)
+    assert time.monotonic() - started < 15
+    assert len(found) == 5 and failed == ["dead_http"]
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1 and "dead_http" in errors[0].getMessage()
+
+
+async def test_tavily_manifest_is_streamable_http():
+    tavily = load_config("mcp_config.json", include={"tavily"})["tavily"]
+    assert tavily["transport"] == "streamable_http" and tavily["url"].startswith("https://mcp.tavily.com")
+    assert tavily["headers"]["Authorization"].startswith("Bearer ")
+    assert tavily["tools"] == ["tavily_search", "tavily_extract"]
+
+
+@pytest.mark.network
+async def test_discovery_tolerates_invalid_tavily_key(monkeypatch):
+    monkeypatch.setenv("TAVILY_API_KEY", "invalid")
+    config = load_config("mcp_config.json", include={"tavily"})
+    found, failed = await asyncio.wait_for(discover_tools(config), timeout=30)
+    assert failed == ["tavily"] or {t.name for t in found} <= {"tavily_search", "tavily_extract"}

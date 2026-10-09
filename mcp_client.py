@@ -57,13 +57,23 @@ async def _discover_one(name: str, connection: dict) -> list[BaseTool] | None:
     # Stateless sessions on purpose: each tool call spawns a fresh stdio subprocess, so a
     # server that dies mid-conversation self-heals on the next call. The cost is subprocess
     # startup per call and no in-process cache survival across calls, acceptable at this traffic.
-    client = MultiServerMCPClient({name: connection})
+    # The optional "tools" allowlist is a static capability choice, not query routing: the hosted
+    # Tavily server also exposes tavily_crawl, tavily_map and tavily_research, which would only widen the LLM's options.
+    allowed = connection.get("tools")
+    client = MultiServerMCPClient({name: {k: v for k, v in connection.items() if k != "tools"}})
     try:
         tools = await asyncio.wait_for(client.get_tools(), timeout=DISCOVERY_TIMEOUT_SECONDS)
     except Exception as exc:
         logger.error("MCP server %s failed during discovery: %s: %s", name, type(exc).__name__, exc)
         return None
-    logger.info("discovered %d tools from %s: %s", len(tools), name, [tool.name for tool in tools])
+    exposed = len(tools)
+    kept_note = ""
+    if allowed is not None:
+        for missing in set(allowed) - {tool.name for tool in tools}:
+            logger.warning("MCP server %s does not expose allowlisted tool %s", name, missing)
+        tools = [tool for tool in tools if tool.name in allowed]
+        kept_note = f" ({len(tools)} of {exposed} kept)"
+    logger.info("discovered %d tools from %s: %s%s", len(tools), name, [tool.name for tool in tools], kept_note)
     return tools
 
 
