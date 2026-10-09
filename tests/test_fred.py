@@ -283,7 +283,9 @@ async def test_macro_snapshot_partial_failure_is_not_cached(up, caplog):
         "key": "vix", "series_id": "VIXCLS", "label": "CBOE Volatility Index (VIX)", "error": "unavailable",
     }
     assert all("error" not in i for i in result["indicators"][:6])
-    assert len(warnings(caplog)) == 1
+    messages = [r.getMessage() for r in warnings(caplog)]
+    assert len(messages) == 2
+    assert "failed for VIXCLS" in messages[0] and "snapshot indicator VIXCLS unavailable" in messages[1]
     await fred.get_macro_snapshot()
     assert len(up.requests) == 14
 
@@ -335,6 +337,13 @@ async def test_missing_api_key(up, monkeypatch):
     with pytest.raises(ToolError, match="not configured") as excinfo:
         await fred.get_series("DGS10", "1y")
     assert "FRED" not in str(excinfo.value)
+    assert up.requests == []
+
+
+async def test_macro_snapshot_missing_api_key(up, monkeypatch):
+    monkeypatch.delenv("FRED_API_KEY")
+    with pytest.raises(ToolError, match="not configured"):
+        await fred.get_macro_snapshot()
     assert up.requests == []
 
 

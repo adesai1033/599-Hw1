@@ -115,15 +115,20 @@ async def _get_json(url: str, params: dict[str, str], key: str) -> Any:
         raise _Upstream("malformed") from None
 
 
-async def _fetch_fred(path: str, params: dict[str, str]) -> Any:
+def _require_api_key() -> str:
     key = os.environ.get("FRED_API_KEY")
     if not key:
         raise ToolError("Economic data provider is not configured (missing API key).")
+    return key
+
+
+async def _fetch_fred(path: str, params: dict[str, str]) -> Any:
+    key = _require_api_key()
     label = params.get("series_id") or f'"{params["search_text"]}"'
     try:
         return await _get_json(f"{FRED_URL}{path}", params, key)
     except _Upstream as exc:
-        logger.debug("fred %s failed for %s: %s", path, label, exc.kind)
+        logger.warning("fred %s failed for %s: %s", path, label, exc.kind)
         if exc.kind == "malformed":
             raise _malformed(label) from None
         if exc.kind == "rejected":
@@ -259,6 +264,7 @@ async def _read_indicator(series_id: str, extra: dict[str, str], start: str) -> 
 
 
 async def _build_snapshot() -> dict[str, Any]:
+    _require_api_key()
     today = datetime.now(timezone.utc).date()
     start = (today - timedelta(days=400)).isoformat()
     outcomes = await asyncio.gather(

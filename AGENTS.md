@@ -33,7 +33,7 @@ Every tool returns live data.
    upstream call goes through one `_fetch_*` function so a source can be swapped without
    touching tool signatures.
 2. **`fred`** (ours, `mcp_servers/fred.py`) — wraps the St. Louis Fed FRED API.
-   Tools: `get_series(series_id, period)`, `search_series(query)`. Key from `FRED_API_KEY`.
+   Tools: `get_series(series_id, period)`, `search_series(query)`, `get_macro_snapshot()`. Key from `FRED_API_KEY`.
 3. **`tavily`** (external, official Tavily MCP server) — web/news search. Key from
    `TAVILY_API_KEY`. We do not modify it; we cite it in the README.
 
