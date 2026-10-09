@@ -19,16 +19,19 @@ Every tool returns live data.
 | MCP client | `langchain-mcp-adapters` → `MultiServerMCPClient` |
 | HTTP | FastAPI + uvicorn, `POST /chat` |
 | Memory | `langgraph.checkpoint.memory.MemorySaver`, `thread_id = session_id` |
-| MCP server framework (ours) | FastMCP (`mcp` Python SDK), stdio transport |
+| MCP server framework (ours) | `mcp` Python SDK 2.x (`MCPServer`, formerly `FastMCP`), stdio transport |
 | Deployment | Docker (multi-stage, non-root) → Cloud Run, `us-west1`, `--max-instances 1` |
 
 ## MCP servers
 
-1. **`market_data`** (ours, `mcp_servers/market_data.py`) — wraps Finnhub.
-   Tools: `get_quote(symbol)`, `get_price_history(symbol, period)`, `get_top_movers()`,
-   `compare(symbols, period)`. `period ∈ {1w, 1m, 3m, 6m, 1y}`. In-process TTL cache
-   (~5 min per symbol). All upstream HTTP goes through one `fetch_*` layer so the data
-   source can be swapped (e.g. to `yfinance`) without touching tool signatures.
+1. **`market_data`** (ours, `mcp_servers/market_data.py`) — Finnhub for quotes, profiles and
+   news; Twelve Data for price history, with `yfinance` as fallback.
+   Tools: `get_quote(symbol)`, `get_price_history(symbol, period)`,
+   `compare_performance(symbols, period)`, `get_company_profile(symbol)`,
+   `get_company_news(symbol, days)`. `period ∈ {1w, 1m, 3m, 6m, 1y}`. Keys from
+   `FINNHUB_API_KEY` and `TWELVEDATA_API_KEY`. In-process TTL cache (5 min). Every
+   upstream call goes through one `_fetch_*` function so a source can be swapped without
+   touching tool signatures.
 2. **`fred`** (ours, `mcp_servers/fred.py`) — wraps the St. Louis Fed FRED API.
    Tools: `get_series(series_id, period)`, `search_series(query)`. Key from `FRED_API_KEY`.
 3. **`tavily`** (external, official Tavily MCP server) — web/news search. Key from
@@ -44,8 +47,8 @@ main.py              FastAPI app, /chat endpoint, reads PORT (default 8083), bin
 agent.py             LangGraph graph: agent node, tools node, conditional edge, MemorySaver
 mcp_client.py        MultiServerMCPClient setup, tool discovery, transport-failure handling
 mcp_servers/
-  market_data.py     FastMCP server (Finnhub)
-  fred.py            FastMCP server (FRED)
+  market_data.py     MCP server (Finnhub, Twelve Data, yfinance)
+  fred.py            MCP server (FRED)
 mcp_config.json      three server manifests (command/args/env per server)
 tests/               pytest; see "Verification" below
 Dockerfile           multi-stage, python:3.13-slim, Node for Tavily/npx, non-root appuser
@@ -122,7 +125,7 @@ Do not violate them to "make tests pass."
 - Python 3.13, type hints on public functions, `async` end-to-end in the request path.
 - Tool docstrings are the LLM's only description of a tool — write them for the model:
   what it returns, valid argument values, when to use it vs. a sibling tool.
-- JSON Schemas for our tools come from FastMCP's type inference. Keep argument types
+- JSON Schemas for our tools come from the MCP SDK's type inference. Keep argument types
   simple (`str`, `list[str]`, `Literal[...]`) so the LLM gets shapes right.
 - Keep each MCP server a single file, runnable standalone with
   `python mcp_servers/<name>.py` (stdio).
@@ -142,8 +145,9 @@ Minimum before any deploy:
   | Query | Expected behavior |
   |---|---|
   | "Why did NVDA drop today?" | `get_quote` → `get_price_history` → tavily search |
-  | "Compare TSLA and RIVN over the last month" | `compare` (or two `get_price_history`) |
+  | "Compare TSLA and RIVN over the last month" | `compare_performance` |
   | "What about six months instead?" | reuses prior tickers from memory |
+  | "What does RIVN do, and how big is it?" | `get_company_profile` |
   | "Is that about the stock or about rates?" | adds a `fred` call |
   | "What's a P/E ratio?" | **no** tool call |
   | "What did I ask you first?" | real answer from memory |

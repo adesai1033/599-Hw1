@@ -1,10 +1,6 @@
-# Pin exact versions (pip freeze) once installed.
-fastapi
-uvicorn
-langchain-openai
-langgraph
-langchain-mcp-adapters
-mcp
-httpx
-pytest
-pytest-asyncio
+# Stage 1 (market_data server) pins. Add the agent/API dependencies and pin them when installed.
+mcp==2.3.0
+httpx==0.28.1
+yfinance==1.7.0
+pytest==9.1.1
+pytest-asyncio==1.4.0
