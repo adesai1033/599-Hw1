@@ -17,6 +17,22 @@
 - The snapshot now checks `FRED_API_KEY` before fetching, so a missing key reports "not configured" instead of "temporarily unavailable". Upstream failures now log at WARNING.
 - Full suite: 82 tests pass.
 
+## 2026-10-09: Agent graph (Stage 3, `market_data` only)
+- Built `mcp_client.py` (config loading with `${VAR}` substitution, per-server tool discovery), `agent.py` (explicit `StateGraph`: agent -> tools -> agent loop, `MemorySaver`, `ask()`), and `scripts/repl.py`. Tavily and FRED are not wired in yet.
+- **`mcp` 2.x -> 1.x:** installing `langchain-mcp-adapters` pulled `mcp` back to 1.30. Adapters 0.3.1 doesn't import against `mcp` 2.x either, so I ported both servers back to `FastMCP` and pinned `mcp==1.30.0`. This reverses my earlier 2.x choice.
+- **Stateless MCP sessions:** each tool call spawns a fresh stdio subprocess. A server that dies mid-conversation heals on the next call. The cost is subprocess startup per call and losing the servers' in-process caches.
+- **Live bug:** Finnhub returns `d` and `dp` as `null` (not `0`) for an unknown ticker, so my numeric check fired first and `ZZZZQ` reported "Malformed" instead of "No quote found". Fixed by checking not-found first, with a regression test.
+- Added 16 graph tests, plus a `bind_tools` assertion after a review pointed out the suite would pass even if tools were never bound. I confirmed it by removing `bind_tools` and watching the test fail. Deleted the dead `tests/test_servers.py` stub. 99 tests pass.
+- **First live tool-selection trace** (`gpt-5-mini`, real `market_data` server, one session):
+```
+quote for NVDA                    -> tool_call name=get_quote args={"symbol": "NVDA"}
+what's a P/E ratio?               -> (no tool_call)
+compare TSLA and RIVN ... month   -> tool_call name=compare_performance args={"symbols": ["TSLA", "RIVN"], "period": "1m"}
+what about six months instead?    -> tool_call name=compare_performance args={"symbols": ["TSLA", "RIVN"], "period": "6m"}
+quote for ZZZZQ                   -> tool_result name=get_quote status=error chars=153
+```
+  Memory worked: the six-month follow-up reused both tickers. The `ZZZZQ` run happened before the null-field fix above, so it quoted "Malformed response".
+
 ## Prompting: what worked vs. what didn't
 **Worked**
 - Staged prompts, one file each, with AGENTS.md pasted first. The model stayed in scope and `market_data.py` served as the template for `fred.py`.
@@ -33,6 +49,6 @@
 - Bare "push" left the commit message unspecified. It's better to say the message up front.
 
 ## Still to do
-- Live-test FRED and Twelve Data with real keys.
-- Build `mcp_client.py` (substitute `${VAR}` from the environment, resolve the venv Python), `agent.py` and `main.py`.
-- Fill in the README, then deploy.
+- Live-test FRED and Twelve Data with real keys (not done; the `.env` keys are set).
+- Stage 4: wire in FRED and Tavily, then re-run the canonical queries ("stock or rates?" should add a FRED call).
+- `main.py` with the `/chat` endpoint, the failure-mode tests (`tests/test_failures.py`), README, deploy.

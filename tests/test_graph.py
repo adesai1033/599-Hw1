@@ -95,6 +95,7 @@ async def test_loop_back_on_tool_call(tools, quote_calls):
     assert kinds == [HumanMessage, AIMessage, ToolMessage, AIMessage]
     assert quote_calls == [{"symbol": "NVDA"}]
     assert len(model.calls) == 2
+    assert [t.name for t in model.bound_tools] == ["fake_quote", "failing_tool"]
 
 
 async def test_multi_step_chain(tools, quote_calls):
@@ -156,7 +157,7 @@ async def test_recursion_guard(tools, caplog):
 
 
 async def test_final_text_handles_content_blocks():
-    blocks = [{"type": "text", "text": "Hello "}, {"type": "text", "text": "world"}, {"type": "tool_use", "id": "x"}]
+    blocks = [{"type": "text", "text": "Hello "}, {"type": "text", "text": "world"}, {"type": "tool_use", "text": "SHOULD NOT APPEAR"}]
     assert agent._final_text(AIMessage(content=blocks)) == "Hello world"
     assert agent._final_text(AIMessage(content="")) == EMPTY_ANSWER
 
