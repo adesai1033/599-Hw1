@@ -99,6 +99,9 @@ Do not violate them to "make tests pass."
    - malformed response: upstream returns something unparseable or off-schema
      (Finnhub returns HTTP 200 with `{"Information": ...}` when rate-limited —
      treat that as malformed and surface it cleanly)
+   When a server fails discovery, its `description` from `mcp_config.json` is appended to
+   the system message so the model can say the data is unavailable instead of offering to
+   fetch it.
 6. **Validate inside our servers.** `market_data` and `fred` check upstream payloads
    before returning; they raise a clear tool error rather than passing garbage to the LLM.
 7. **Read `PORT` from the environment.** Never hard-code 8080 in `main.py`.

@@ -14,6 +14,8 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 logger = logging.getLogger("mcp_client")
 
 DISCOVERY_TIMEOUT_SECONDS = 30
+# Manifest-only keys: read by us, never part of the connection handed to MultiServerMCPClient.
+_MANIFEST_ONLY_KEYS = {"tools", "description"}
 _PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
@@ -60,7 +62,7 @@ async def _discover_one(name: str, connection: dict) -> list[BaseTool] | None:
     # The optional "tools" allowlist is a static capability choice, not query routing: the hosted
     # Tavily server also exposes tavily_crawl, tavily_map and tavily_research, which would only widen the LLM's options.
     allowed = connection.get("tools")
-    client = MultiServerMCPClient({name: {k: v for k, v in connection.items() if k != "tools"}})
+    client = MultiServerMCPClient({name: {k: v for k, v in connection.items() if k not in _MANIFEST_ONLY_KEYS}})
     try:
         tools = await asyncio.wait_for(client.get_tools(), timeout=DISCOVERY_TIMEOUT_SECONDS)
     except Exception as exc:
@@ -77,15 +79,15 @@ async def _discover_one(name: str, connection: dict) -> list[BaseTool] | None:
     return tools
 
 
-async def discover_tools(config: dict[str, dict]) -> tuple[list[BaseTool], list[str]]:
-    """Return (tools, failed server names). One dead server never blocks the others."""
+async def discover_tools(config: dict[str, dict]) -> tuple[list[BaseTool], dict[str, str]]:
+    """Return (tools, {failed server: description}). One dead server never blocks the others."""
     results = await asyncio.gather(*(_discover_one(name, conn) for name, conn in config.items()))
     tools: list[BaseTool] = []
-    failed: list[str] = []
+    unavailable: dict[str, str] = {}
     owner: dict[str, str] = {}
     for name, server_tools in zip(config, results):
         if server_tools is None:
-            failed.append(name)
+            unavailable[name] = config[name].get("description", name)
             continue
         for tool in server_tools:
             if tool.name in owner:
@@ -94,4 +96,4 @@ async def discover_tools(config: dict[str, dict]) -> tuple[list[BaseTool], list[
                 )
             owner[tool.name] = name
         tools.extend(server_tools)
-    return tools, failed
+    return tools, unavailable

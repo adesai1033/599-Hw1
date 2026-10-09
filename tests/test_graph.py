@@ -6,6 +6,8 @@ market_data server over stdio (tools/list needs no key and no network).
 import asyncio
 import json
 import logging
+import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -19,7 +21,8 @@ from langgraph.checkpoint.memory import MemorySaver
 from pydantic import Field
 
 import agent
-from agent import EMPTY_ANSWER, RECURSION_ANSWER, SYSTEM_PROMPT, ask, build_graph
+import mcp_client
+from agent import EMPTY_ANSWER, RECURSION_ANSWER, SYSTEM_PROMPT, ask, build_graph, system_message
 from mcp_client import discover_tools, load_config
 from mcp_servers import market_data
 
@@ -211,8 +214,8 @@ async def discover_market_data():
 async def test_real_discovery(monkeypatch):
     for key in ("FINNHUB_API_KEY", "TWELVEDATA_API_KEY"):
         monkeypatch.delenv(key, raising=False)
-    found, failed = await discover_market_data()
-    assert {t.name for t in found} == MARKET_DATA_TOOLS and len(found) == 5 and failed == []
+    found, unavailable = await discover_market_data()
+    assert {t.name for t in found} == MARKET_DATA_TOOLS and len(found) == 5 and unavailable == {}
     for found_tool in found:
         docstring = getattr(market_data, found_tool.name).__doc__
         assert found_tool.description.strip() == docstring.strip()
@@ -222,8 +225,8 @@ async def test_dead_server_is_skipped(caplog):
     config = load_config("mcp_config.json", include={"market_data"})
     config["broken"] = {"transport": "stdio", "command": "/nonexistent/binary", "args": []}
     with caplog.at_level(logging.INFO, logger="mcp_client"):
-        found, failed = await asyncio.wait_for(discover_tools(config), timeout=60)
-    assert len(found) == 5 and failed == ["broken"]
+        found, unavailable = await asyncio.wait_for(discover_tools(config), timeout=60)
+    assert len(found) == 5 and unavailable == {"broken": "broken"}
     errors = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert len(errors) == 1 and "broken" in errors[0].getMessage()
 
@@ -260,8 +263,8 @@ async def test_allowlist_filters_and_warns_about_missing(caplog):
     config = load_config("mcp_config.json", include={"market_data"})
     config["market_data"]["tools"] = ["get_quote", "compare_performance", "not_a_tool"]
     with caplog.at_level(logging.INFO, logger="mcp_client"):
-        found, failed = await asyncio.wait_for(discover_tools(config), timeout=60)
-    assert [t.name for t in found] == ["get_quote", "compare_performance"] and failed == []
+        found, unavailable = await asyncio.wait_for(discover_tools(config), timeout=60)
+    assert [t.name for t in found] == ["get_quote", "compare_performance"] and unavailable == {}
     warned = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING and "allowlisted" in r.getMessage()]
     assert len(warned) == 1 and "market_data" in warned[0] and "not_a_tool" in warned[0]
     assert any("(2 of 5 kept)" in r.getMessage() for r in caplog.records)
@@ -271,9 +274,9 @@ async def test_real_discovery_of_both_stdio_servers(monkeypatch):
     for key in ("FINNHUB_API_KEY", "TWELVEDATA_API_KEY", "FRED_API_KEY"):
         monkeypatch.delenv(key, raising=False)
     config = load_config("mcp_config.json", include={"market_data", "fred"})
-    found, failed = await asyncio.wait_for(discover_tools(config), timeout=60)
+    found, unavailable = await asyncio.wait_for(discover_tools(config), timeout=60)
     assert {t.name for t in found} == MARKET_DATA_TOOLS | {"get_series", "search_series", "get_macro_snapshot"}
-    assert len(found) == 8 and failed == []
+    assert len(found) == 8 and unavailable == {}
 
 
 async def test_dead_http_server_is_skipped_quickly(caplog):
@@ -281,9 +284,9 @@ async def test_dead_http_server_is_skipped_quickly(caplog):
     config["dead_http"] = {"transport": "streamable_http", "url": "http://127.0.0.1:9/mcp/"}
     started = time.monotonic()
     with caplog.at_level(logging.INFO, logger="mcp_client"):
-        found, failed = await asyncio.wait_for(discover_tools(config), timeout=60)
+        found, unavailable = await asyncio.wait_for(discover_tools(config), timeout=60)
     assert time.monotonic() - started < 15
-    assert len(found) == 5 and failed == ["dead_http"]
+    assert len(found) == 5 and unavailable == {"dead_http": "dead_http"}
     errors = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert len(errors) == 1 and "dead_http" in errors[0].getMessage()
 
@@ -299,5 +302,74 @@ async def test_tavily_manifest_is_streamable_http():
 async def test_discovery_tolerates_invalid_tavily_key(monkeypatch):
     monkeypatch.setenv("TAVILY_API_KEY", "invalid")
     config = load_config("mcp_config.json", include={"tavily"})
-    found, failed = await asyncio.wait_for(discover_tools(config), timeout=30)
-    assert failed == ["tavily"] or {t.name for t in found} <= {"tavily_search", "tavily_extract"}
+    found, unavailable = await asyncio.wait_for(discover_tools(config), timeout=30)
+    assert set(unavailable) == {"tavily"} or {t.name for t in found} <= {"tavily_search", "tavily_extract"}
+
+
+async def test_system_message_without_unavailable_servers():
+    for empty in (None, {}):
+        message = system_message(empty)
+        assert isinstance(message, SystemMessage) and message.content == SYSTEM_PROMPT
+
+
+async def test_system_message_lists_unavailable_servers():
+    content = system_message({"fred": "macro data", "tavily": "web search"}).content
+    assert content.startswith(SYSTEM_PROMPT)
+    assert "Unavailable this session: macro data; web search." in content
+    assert "do not offer to look it up later" in content
+
+
+async def test_discovery_returns_descriptions_of_failed_servers():
+    base = load_config("mcp_config.json", include={"market_data"})
+    broken = {"transport": "stdio", "command": "/nonexistent/binary", "args": []}
+    config = {**base, "broken": {**broken, "description": "fake broken server"}}
+    _, unavailable = await asyncio.wait_for(discover_tools(config), timeout=60)
+    assert unavailable == {"broken": "fake broken server"}
+    _, unavailable = await asyncio.wait_for(discover_tools({**base, "broken": broken}), timeout=60)
+    assert unavailable == {"broken": "broken"}
+
+
+async def test_manifest_only_keys_stay_out_of_the_connection(tmp_path, monkeypatch):
+    manifest = tmp_path / "mcp.json"
+    manifest.write_text(json.dumps({"s": {
+        "transport": "stdio", "command": "x", "args": [], "tools": ["a"], "description": "d",
+    }}))
+    config = load_config(manifest)
+    assert config["s"]["description"] == "d" and config["s"]["tools"] == ["a"]
+    seen = []
+
+    class RecordingClient:
+        def __init__(self, connections):
+            seen.append(connections)
+
+        async def get_tools(self):
+            raise RuntimeError("stop here")
+
+    monkeypatch.setattr(mcp_client, "MultiServerMCPClient", RecordingClient)
+    _, unavailable = await discover_tools(config)
+    assert unavailable == {"s": "d"}
+    assert "tools" not in seen[0]["s"] and "description" not in seen[0]["s"]
+
+
+async def test_graph_tells_the_model_which_servers_are_down(tools):
+    model = ScriptedChatModel(script=[AIMessage("ok")])
+    graph = build_graph(tools, model, MemorySaver(), unavailable={"fred": "macro data"})
+    await ask(graph, "rates?", "s1")
+    first = model.calls[0][0]
+    assert isinstance(first, SystemMessage) and "Unavailable this session: macro data." in first.content
+    assert not any(isinstance(m, SystemMessage) for m in await thread(graph))
+
+
+async def test_graph_without_unavailable_servers_uses_plain_prompt(tools):
+    model = ScriptedChatModel(script=[AIMessage("ok")])
+    await ask(build_graph(tools, model, MemorySaver()), "hi", "s1")
+    assert model.calls[0][0].content == SYSTEM_PROMPT
+
+
+async def test_repl_starts_and_reaches_the_prompt():
+    env = {**os.environ, "OPENAI_API_KEY": "test-key-not-used"}
+    result = subprocess.run(
+        [sys.executable, "scripts/repl.py", "--servers", "market_data"],
+        input="", capture_output=True, text=True, cwd=ROOT, env=env, timeout=60,
+    )
+    assert result.returncode == 0 and "> " in result.stdout

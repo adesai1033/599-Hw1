@@ -2,22 +2,36 @@
   "market_data": {
     "transport": "stdio",
     "command": "python",
-    "args": ["mcp_servers/market_data.py"],
+    "args": [
+      "mcp_servers/market_data.py"
+    ],
     "env": {
       "FINNHUB_API_KEY": "${FINNHUB_API_KEY}",
       "TWELVEDATA_API_KEY": "${TWELVEDATA_API_KEY}"
-    }
+    },
+    "description": "stock quotes, price history, company profiles and company news"
   },
   "fred": {
     "transport": "stdio",
     "command": "python",
-    "args": ["mcp_servers/fred.py"],
-    "env": {"FRED_API_KEY": "${FRED_API_KEY}"}
+    "args": [
+      "mcp_servers/fred.py"
+    ],
+    "env": {
+      "FRED_API_KEY": "${FRED_API_KEY}"
+    },
+    "description": "macroeconomic data: interest rates, inflation, unemployment, the VIX"
   },
   "tavily": {
     "transport": "streamable_http",
     "url": "https://mcp.tavily.com/mcp/",
-    "headers": {"Authorization": "Bearer ${TAVILY_API_KEY}"},
-    "tools": ["tavily_search", "tavily_extract"]
+    "headers": {
+      "Authorization": "Bearer ${TAVILY_API_KEY}"
+    },
+    "tools": [
+      "tavily_search",
+      "tavily_extract"
+    ],
+    "description": "web search and page extraction for news and analysis"
   }
 }

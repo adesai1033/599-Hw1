@@ -12,9 +12,9 @@ from agent import ask, build_agent  # noqa: E402
 
 
 async def main(servers: set[str], session: str) -> None:
-    graph, failed = await build_agent(os.environ.get("MCP_SERVERS_CONFIG", "mcp_config.json"), servers)
-    if failed:
-        print("servers that failed to start:", ", ".join(failed))
+    graph, unavailable = await build_agent(os.environ.get("MCP_SERVERS_CONFIG", "mcp_config.json"), servers)
+    if unavailable:
+        print("servers that failed to start:", ", ".join(f"{name} ({text})" for name, text in unavailable.items()))
     while True:
         try:
             line = (await asyncio.to_thread(input, "> ")).strip()

@@ -48,19 +48,33 @@ EMPTY_ANSWER = "I wasn't able to produce an answer."
 RECURSION_ANSWER = "I couldn't finish answering that within the allowed number of steps. Try a narrower question."
 
 
+def system_message(unavailable: dict[str, str] | None) -> SystemMessage:
+    if not unavailable:
+        return SystemMessage(SYSTEM_PROMPT)
+    return SystemMessage(
+        f"{SYSTEM_PROMPT}\nUnavailable this session: {'; '.join(unavailable.values())}. "
+        "If a question touches any of these, begin your answer by saying plainly that this data is "
+        "unavailable right now, then answer with what you do have; do not offer to look it up later."
+    )
+
+
 def build_llm() -> ChatOpenAI:
     # No temperature: the gpt-5 family rejects non-default values.
     return ChatOpenAI(model=os.environ.get("OPENAI_MODEL", "gpt-5-mini"))
 
 
 def build_graph(
-    tools: list[BaseTool], llm: BaseChatModel, checkpointer: MemorySaver | None = None
+    tools: list[BaseTool],
+    llm: BaseChatModel,
+    checkpointer: MemorySaver | None = None,
+    unavailable: dict[str, str] | None = None,
 ) -> CompiledStateGraph:
     model = llm.bind_tools(tools) if tools else llm
     tool_node = ToolNode(tools, handle_tool_errors=True)
+    system = system_message(unavailable)
 
     async def agent_node(state: MessagesState) -> dict:
-        response = await model.ainvoke([SystemMessage(SYSTEM_PROMPT), *state["messages"]])
+        response = await model.ainvoke([system, *state["messages"]])
         for call in response.tool_calls:
             logger.info("tool_call name=%s args=%s", call["name"], json.dumps(call["args"]))
         return {"messages": [response]}
@@ -104,6 +118,6 @@ async def ask(graph: CompiledStateGraph, query: str, session_id: str, recursion_
 
 async def build_agent(
     config_path: str | Path, include: set[str] | None = None
-) -> tuple[CompiledStateGraph, list[str]]:
-    tools, failed = await discover_tools(load_config(config_path, include))
-    return build_graph(tools, build_llm()), failed
+) -> tuple[CompiledStateGraph, dict[str, str]]:
+    tools, unavailable = await discover_tools(load_config(config_path, include))
+    return build_graph(tools, build_llm(), unavailable=unavailable), unavailable
