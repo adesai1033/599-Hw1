@@ -19,7 +19,7 @@ from langgraph.checkpoint.memory import MemorySaver
 
 import agent
 import mcp_client
-from agent import EMPTY_ANSWER, RECURSION_ANSWER, SYSTEM_PROMPT, ask, build_graph, system_message
+from agent import EMPTY_ANSWER, RECURSION_ANSWER, SYSTEM_PROMPT, ask, build_graph, system_message, turn_trace
 from mcp_client import discover_tools, load_config
 from mcp_servers import market_data
 from tests.conftest import ScriptedChatModel, call
@@ -67,7 +67,9 @@ async def thread(graph, session="s1"):
 async def test_loop_back_on_tool_call(tools, quote_calls):
     model = ScriptedChatModel(script=[call("fake_quote", "NVDA", "c1"), AIMessage("NVDA is at 133.")])
     graph = build_graph(tools, model, MemorySaver())
-    assert await ask(graph, "quote for NVDA", "s1") == "NVDA is at 133."
+    answer, trace = await ask(graph, "quote for NVDA", "s1", owner={"fake_quote": "local"})
+    assert answer == "NVDA is at 133."
+    assert trace == [{"server": "local", "tool": "fake_quote", "args": {"symbol": "NVDA"}, "status": "success"}]
     kinds = [type(m) for m in await thread(graph)]
     assert kinds == [HumanMessage, AIMessage, ToolMessage, AIMessage]
     assert quote_calls == [{"symbol": "NVDA"}]
@@ -89,8 +91,8 @@ async def test_multi_step_chain(tools, quote_calls):
 async def test_no_tool_needed(tools, quote_calls):
     model = ScriptedChatModel(script=[AIMessage("A P/E ratio is price over earnings.")])
     graph = build_graph(tools, model, MemorySaver())
-    await ask(graph, "what's a P/E ratio?", "s1")
-    assert len(await thread(graph)) == 2 and quote_calls == [] and len(model.calls) == 1
+    _, trace = await ask(graph, "what's a P/E ratio?", "s1")
+    assert trace == [] and len(await thread(graph)) == 2 and quote_calls == [] and len(model.calls) == 1
 
 
 async def test_system_prompt_is_prepended_not_stored(tools):
@@ -118,7 +120,9 @@ async def test_memory_within_thread_and_isolation_across_threads(tools):
 async def test_tool_error_is_graceful(tools):
     model = ScriptedChatModel(script=[call("failing_tool", "ZZZZQ", "c1"), AIMessage("I couldn't get a quote for ZZZZQ.")])
     graph = build_graph(tools, model, MemorySaver())
-    assert await ask(graph, "quote ZZZZQ", "s1") == "I couldn't get a quote for ZZZZQ."
+    answer, trace = await ask(graph, "quote ZZZZQ", "s1", owner={"failing_tool": "local"})
+    assert answer == "I couldn't get a quote for ZZZZQ."
+    assert [(c["tool"], c["status"]) for c in trace] == [("failing_tool", "error")]
     tool_message = next(m for m in await thread(graph) if isinstance(m, ToolMessage))
     assert tool_message.status == "error" and "No quote found for ZZZZQ" in str(tool_message.content)
     assert any(isinstance(m, ToolMessage) for m in model.calls[1])
@@ -128,8 +132,8 @@ async def test_recursion_guard(tools, caplog):
     model = ScriptedChatModel(script=[call("fake_quote", "NVDA", f"c{i}") for i in range(50)])
     graph = build_graph(tools, model, MemorySaver())
     with caplog.at_level(logging.INFO, logger="agent"):
-        answer = await ask(graph, "loop forever", "s1", recursion_limit=6)
-    assert answer == RECURSION_ANSWER
+        answer, trace = await ask(graph, "loop forever", "s1", recursion_limit=6)
+    assert answer == RECURSION_ANSWER and trace == []
     assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 1
 
 
@@ -142,8 +146,8 @@ async def test_final_text_handles_content_blocks():
 async def test_graph_works_with_zero_tools():
     model = ScriptedChatModel(script=[AIMessage("A P/E ratio is price over earnings.")])
     graph = build_graph([], model, MemorySaver())
-    assert "price over earnings" in await ask(graph, "what's a P/E ratio?", "s1")
-    assert model.bound_tools == []
+    answer, _ = await ask(graph, "what's a P/E ratio?", "s1")
+    assert "price over earnings" in answer and model.bound_tools == []
 
 
 async def test_tool_calls_and_results_are_logged(tools, caplog):
@@ -187,8 +191,9 @@ async def discover_market_data():
 async def test_real_discovery(monkeypatch):
     for key in ("FINNHUB_API_KEY", "TWELVEDATA_API_KEY"):
         monkeypatch.delenv(key, raising=False)
-    found, unavailable = await discover_market_data()
+    found, unavailable, owner = await discover_market_data()
     assert {t.name for t in found} == MARKET_DATA_TOOLS and len(found) == 5 and unavailable == {}
+    assert owner == {name: "market_data" for name in MARKET_DATA_TOOLS}
     for found_tool in found:
         docstring = getattr(market_data, found_tool.name).__doc__
         assert found_tool.description.strip() == docstring.strip()
@@ -198,7 +203,7 @@ async def test_dead_server_is_skipped(caplog):
     config = load_config("mcp_config.json", include={"market_data"})
     config["broken"] = {"transport": "stdio", "command": "/nonexistent/binary", "args": []}
     with caplog.at_level(logging.INFO, logger="mcp_client"):
-        found, unavailable = await asyncio.wait_for(discover_tools(config), timeout=60)
+        found, unavailable, _ = await asyncio.wait_for(discover_tools(config), timeout=60)
     assert len(found) == 5 and unavailable == {"broken": "broken"}
     errors = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert len(errors) == 1 and "broken" in errors[0].getMessage()
@@ -206,10 +211,12 @@ async def test_dead_server_is_skipped(caplog):
 
 async def test_real_mcp_tool_error_becomes_graceful_graph_step(monkeypatch):
     monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
-    found, _ = await discover_market_data()
+    found, _, _ = await discover_market_data()
     model = ScriptedChatModel(script=[call("get_quote", "N V DA", "c1"), AIMessage("That isn't a valid ticker.")])
     graph = build_graph(found, model, MemorySaver())
-    assert await ask(graph, "quote N V DA", "s1") == "That isn't a valid ticker."
+    answer, trace = await ask(graph, "quote N V DA", "s1", owner={"get_quote": "market_data"})
+    assert answer == "That isn't a valid ticker."
+    assert trace == [{"server": "market_data", "tool": "get_quote", "args": {"symbol": "N V DA"}, "status": "error"}]
     tool_message = next(m for m in await thread(graph) if isinstance(m, ToolMessage))
     assert tool_message.status == "error" and "Invalid symbol" in str(tool_message.content)
 
@@ -236,7 +243,7 @@ async def test_allowlist_filters_and_warns_about_missing(caplog):
     config = load_config("mcp_config.json", include={"market_data"})
     config["market_data"]["tools"] = ["get_quote", "compare_performance", "not_a_tool"]
     with caplog.at_level(logging.INFO, logger="mcp_client"):
-        found, unavailable = await asyncio.wait_for(discover_tools(config), timeout=60)
+        found, unavailable, _ = await asyncio.wait_for(discover_tools(config), timeout=60)
     assert [t.name for t in found] == ["get_quote", "compare_performance"] and unavailable == {}
     warned = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING and "allowlisted" in r.getMessage()]
     assert len(warned) == 1 and "market_data" in warned[0] and "not_a_tool" in warned[0]
@@ -247,9 +254,11 @@ async def test_real_discovery_of_both_stdio_servers(monkeypatch):
     for key in ("FINNHUB_API_KEY", "TWELVEDATA_API_KEY", "FRED_API_KEY"):
         monkeypatch.delenv(key, raising=False)
     config = load_config("mcp_config.json", include={"market_data", "fred"})
-    found, unavailable = await asyncio.wait_for(discover_tools(config), timeout=60)
+    found, unavailable, owner = await asyncio.wait_for(discover_tools(config), timeout=60)
     assert {t.name for t in found} == MARKET_DATA_TOOLS | {"get_series", "search_series", "get_macro_snapshot"}
     assert len(found) == 8 and unavailable == {}
+    assert {owner[n] for n in ("get_series", "search_series", "get_macro_snapshot")} == {"fred"}
+    assert {owner[n] for n in MARKET_DATA_TOOLS} == {"market_data"}
 
 
 async def test_dead_http_server_is_skipped_quickly(caplog):
@@ -257,7 +266,7 @@ async def test_dead_http_server_is_skipped_quickly(caplog):
     config["dead_http"] = {"transport": "streamable_http", "url": "http://127.0.0.1:9/mcp/"}
     started = time.monotonic()
     with caplog.at_level(logging.INFO, logger="mcp_client"):
-        found, unavailable = await asyncio.wait_for(discover_tools(config), timeout=60)
+        found, unavailable, _ = await asyncio.wait_for(discover_tools(config), timeout=60)
     assert time.monotonic() - started < 15
     assert len(found) == 5 and unavailable == {"dead_http": "dead_http"}
     errors = [r for r in caplog.records if r.levelno == logging.ERROR]
@@ -275,7 +284,7 @@ async def test_tavily_manifest_is_streamable_http():
 async def test_discovery_tolerates_invalid_tavily_key(monkeypatch):
     monkeypatch.setenv("TAVILY_API_KEY", "invalid")
     config = load_config("mcp_config.json", include={"tavily"})
-    found, unavailable = await asyncio.wait_for(discover_tools(config), timeout=30)
+    found, unavailable, _ = await asyncio.wait_for(discover_tools(config), timeout=30)
     assert set(unavailable) == {"tavily"} or {t.name for t in found} <= {"tavily_search", "tavily_extract"}
 
 
@@ -296,9 +305,9 @@ async def test_discovery_returns_descriptions_of_failed_servers():
     base = load_config("mcp_config.json", include={"market_data"})
     broken = {"transport": "stdio", "command": "/nonexistent/binary", "args": []}
     config = {**base, "broken": {**broken, "description": "fake broken server"}}
-    _, unavailable = await asyncio.wait_for(discover_tools(config), timeout=60)
+    _, unavailable, _ = await asyncio.wait_for(discover_tools(config), timeout=60)
     assert unavailable == {"broken": "fake broken server"}
-    _, unavailable = await asyncio.wait_for(discover_tools({**base, "broken": broken}), timeout=60)
+    _, unavailable, _ = await asyncio.wait_for(discover_tools({**base, "broken": broken}), timeout=60)
     assert unavailable == {"broken": "broken"}
 
 
@@ -319,7 +328,7 @@ async def test_manifest_only_keys_stay_out_of_the_connection(tmp_path, monkeypat
             raise RuntimeError("stop here")
 
     monkeypatch.setattr(mcp_client, "MultiServerMCPClient", RecordingClient)
-    _, unavailable = await discover_tools(config)
+    _, unavailable, _ = await discover_tools(config)
     assert unavailable == {"s": "d"}
     assert "tools" not in seen[0]["s"] and "description" not in seen[0]["s"]
 
@@ -346,3 +355,41 @@ async def test_repl_starts_and_reaches_the_prompt():
         input="", capture_output=True, text=True, cwd=ROOT, env=env, timeout=60,
     )
     assert result.returncode == 0 and "> " in result.stdout
+
+
+def tool_ai(*calls):
+    return AIMessage("", tool_calls=[{"name": n, "args": a, "id": i} for n, a, i in calls])
+
+
+async def test_turn_trace_reports_a_successful_call():
+    messages = [
+        HumanMessage("q"), tool_ai(("get_quote", {"symbol": "NVDA"}, "c1")),
+        ToolMessage("{}", tool_call_id="c1", status="success"), AIMessage("done"),
+    ]
+    assert turn_trace(messages, {"get_quote": "market_data"}) == [
+        {"server": "market_data", "tool": "get_quote", "args": {"symbol": "NVDA"}, "status": "success"},
+    ]
+
+
+async def test_turn_trace_keeps_parallel_calls_in_order():
+    messages = [
+        HumanMessage("q"), tool_ai(("a", {}, "c1"), ("b", {}, "c2")),
+        ToolMessage("ok", tool_call_id="c2", status="error"), ToolMessage("ok", tool_call_id="c1", status="success"),
+        AIMessage("done"),
+    ]
+    trace = turn_trace(messages, {"a": "s", "b": "s"})
+    assert [(c["tool"], c["status"]) for c in trace] == [("a", "success"), ("b", "error")]
+
+
+async def test_turn_trace_excludes_previous_turns():
+    messages = [
+        HumanMessage("one"), tool_ai(("get_quote", {"symbol": "NVDA"}, "c0")),
+        ToolMessage("{}", tool_call_id="c0", status="success"), AIMessage("a"),
+        HumanMessage("two"), AIMessage("no tools"),
+    ]
+    assert turn_trace(messages, {"get_quote": "market_data"}) == []
+
+
+async def test_turn_trace_marks_unfinished_and_unowned_calls():
+    messages = [HumanMessage("q"), tool_ai(("mystery", {}, "c1"))]
+    assert turn_trace(messages, {}) == [{"server": "unknown", "tool": "mystery", "args": {}, "status": "not_run"}]

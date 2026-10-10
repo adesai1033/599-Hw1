@@ -11,6 +11,7 @@ from typing import Annotated
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, StringConstraints
 
@@ -32,8 +33,16 @@ class ChatRequest(BaseModel):
     session_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)]
 
 
+class ToolCallTrace(BaseModel):
+    server: str
+    tool: str
+    args: dict
+    status: str
+
+
 class ChatResponse(BaseModel):
     response: str
+    tool_calls: list[ToolCallTrace] = []
 
 
 def create_app(config_path: str | None = None, llm: BaseChatModel | None = None) -> FastAPI:
@@ -48,7 +57,7 @@ def create_app(config_path: str | None = None, llm: BaseChatModel | None = None)
             logger.critical("OPENAI_API_KEY is not set; refusing to start")
             raise RuntimeError("OPENAI_API_KEY is not set")
         model = llm or build_llm()
-        app.state.graph, app.state.unavailable, app.state.tools = await build_agent(path, llm=model)
+        app.state.graph, app.state.unavailable, app.state.tools, app.state.owner = await build_agent(path, llm=model)
         app.state.servers = list(json.loads(Path(path).read_text()))
         app.state.model = getattr(model, "model_name", type(model).__name__)
         up = [name for name in app.state.servers if name not in app.state.unavailable]
@@ -65,22 +74,26 @@ def create_app(config_path: str | None = None, llm: BaseChatModel | None = None)
         started = time.monotonic()
         logger.debug("chat session=%s query=%.200s", request.session_id, request.query)
         try:
-            answer = await asyncio.wait_for(
-                ask(app.state.graph, request.query, request.session_id), timeout=timeout
+            answer, trace = await asyncio.wait_for(
+                ask(app.state.graph, request.query, request.session_id, owner=app.state.owner), timeout=timeout
             )
         except asyncio.TimeoutError:
             logger.warning("chat timed out session=%s", request.session_id)
-            answer = TIMEOUT_ANSWER
+            answer, trace = TIMEOUT_ANSWER, []
         except Exception:
             # The rubric penalizes unhandled server errors, and a caller cannot tell an LLM outage
             # from a bug; the traceback goes to the logs instead.
             logger.exception("chat failed session=%s", request.session_id)
-            answer = ERROR_ANSWER
+            answer, trace = ERROR_ANSWER, []
         logger.info(
             "chat session=%s query_chars=%d elapsed_ms=%d",
             request.session_id, len(request.query), (time.monotonic() - started) * 1000,
         )
-        return ChatResponse(response=answer)
+        return ChatResponse(response=answer, tool_calls=trace)
+
+    @app.get("/", include_in_schema=False)
+    async def root() -> RedirectResponse:
+        return RedirectResponse("/docs", status_code=307)
 
     @app.get("/health")
     async def health() -> dict:

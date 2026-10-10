@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
@@ -105,21 +105,46 @@ def _final_text(message: BaseMessage) -> str:
     return content.strip() or EMPTY_ANSWER
 
 
-async def ask(graph: CompiledStateGraph, query: str, session_id: str, recursion_limit: int = 25) -> str:
+def turn_trace(messages: list[BaseMessage], owner: dict[str, str]) -> list[dict]:
+    """The MCP calls made since the last human message, in call order, with each call's outcome."""
+    last_human = max((i for i, m in enumerate(messages) if isinstance(m, HumanMessage)), default=-1)
+    turn = messages[last_human + 1 :]
+    outcomes = {m.tool_call_id: m.status for m in turn if isinstance(m, ToolMessage)}
+    return [
+        {
+            "server": owner.get(call["name"], "unknown"),
+            "tool": call["name"],
+            "args": call["args"],
+            "status": outcomes.get(call["id"], "not_run"),
+        }
+        for m in turn if isinstance(m, AIMessage)
+        for call in m.tool_calls
+    ]
+
+
+async def ask(
+    graph: CompiledStateGraph,
+    query: str,
+    session_id: str,
+    recursion_limit: int = 25,
+    owner: dict[str, str] | None = None,
+) -> tuple[str, list[dict]]:
+    """Return (answer text, this turn's tool-call trace)."""
     config: RunnableConfig = {"configurable": {"thread_id": session_id}, "recursion_limit": recursion_limit}
     try:
         result = await graph.ainvoke({"messages": [HumanMessage(query)]}, config)
     except GraphRecursionError:
         logger.warning("recursion limit reached for session %s", session_id)
-        return RECURSION_ANSWER
+        return RECURSION_ANSWER, []
     last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), None)
-    return _final_text(last_ai) if last_ai else EMPTY_ANSWER
+    answer = _final_text(last_ai) if last_ai else EMPTY_ANSWER
+    return answer, turn_trace(result["messages"], owner or {})
 
 
 async def build_agent(
     config_path: str | Path, include: set[str] | None = None, llm: BaseChatModel | None = None
-) -> tuple[CompiledStateGraph, dict[str, str], list[str]]:
-    """Return (graph, {unavailable server: description}, discovered tool names)."""
-    tools, unavailable = await discover_tools(load_config(config_path, include))
+) -> tuple[CompiledStateGraph, dict[str, str], list[str], dict[str, str]]:
+    """Return (graph, {unavailable server: description}, discovered tool names, {tool name: server})."""
+    tools, unavailable, owner = await discover_tools(load_config(config_path, include))
     graph = build_graph(tools, llm or build_llm(), unavailable=unavailable)
-    return graph, unavailable, [tool.name for tool in tools]
+    return graph, unavailable, [tool.name for tool in tools], owner

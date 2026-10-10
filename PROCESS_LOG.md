@@ -60,6 +60,12 @@ quote for ZZZZQ                   -> tool_result name=get_quote status=error cha
 - **Deployed** to Cloud Run (`csci599-a1`, `us-west1`, 1 GiB, 300 s timeout, max 1 instance): `https://csci599-a1-dvw5tijylq-uw.a.run.app`. The public smoke test passed: 10 tools, FRED used for the "stock or rates" follow-up, session memory works and `cloud2` does not see `cloud1`, `ZZZZQ` gives a graceful 200, a bad body gives 422. Tool-call traces show up in Cloud Logging.
 - **Timings:** cold start (after 17 idle minutes) was 12 s for `/health`. The first `/chat` on a fresh instance took 38 s with four tool calls, since every call spawns a subprocess; later requests took 2-10 s. Both are inside the 120 s request timeout.
 
+## 2026-10-09: Tool-call trace and root redirect (Stage 6b)
+- Every `/chat` response now has a `tool_calls` list of `{server, tool, args, status}`, always present and `[]` when no tool ran. It is built from the graph's messages for the current turn only, so the real MCP calls are visible in the response body and not just in logs. `discover_tools` now also returns a tool-to-server map, and `ask` returns `(text, trace)`.
+- `GET /` now redirects to `/docs` with a 307, since the bare `{"detail":"Not Found"}` page confused me when I opened the service URL.
+- Added `turn_trace` unit tests and a redirect test; 130 tests pass offline. Redeployed and checked live: the compare queries show `compare_performance` with `1m` then `6m`, the P/E query shows `[]`, and `ZZZZQ` shows a `get_quote` error followed by a `tavily_search` success.
+- The extra field is additive to the PDF contract (`query`/`response` unchanged); noted in AGENTS.md.
+
 ## Prompting: what worked vs. what didn't
 **Worked**
 - Staged prompts, one file each, with AGENTS.md pasted first. The model stayed in scope and `market_data.py` served as the template for `fred.py`.

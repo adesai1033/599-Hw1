@@ -58,7 +58,7 @@ def test_chat_contract(tmp_path):
     app, _ = make_app(tmp_path, {"market_data": market_data_entry()}, [AIMessage("hello")])
     with TestClient(app) as client:
         reply = chat(client)
-    assert reply.status_code == 200 and reply.json() == {"response": "hello"}
+    assert reply.status_code == 200 and reply.json() == {"response": "hello", "tool_calls": []}
 
 
 def test_invalid_bodies_are_422(tmp_path):
@@ -138,6 +138,9 @@ def test_tool_error_for_invalid_symbol(tmp_path):
         reply = chat(client)
         message = tool_message(app)
     assert reply.status_code == 200 and reply.json()["response"] == "That isn't a valid ticker."
+    assert reply.json()["tool_calls"] == [
+        {"server": "market_data", "tool": "get_quote", "args": {"symbol": "N V DA"}, "status": "error"},
+    ]
     assert message.status == "error" and "Invalid symbol" in str(message.content)
 
 
@@ -191,7 +194,7 @@ def test_slow_request_times_out_with_200(tmp_path, monkeypatch, caplog):
     with TestClient(app) as client:
         with caplog.at_level(logging.INFO, logger="main"):
             reply = chat(client)
-    assert reply.status_code == 200 and reply.json()["response"] == TIMEOUT_SENTENCE
+    assert reply.status_code == 200 and reply.json() == {"response": TIMEOUT_SENTENCE, "tool_calls": []}
     assert len([r for r in caplog.records if r.name == "main" and r.levelno == logging.WARNING]) == 1
 
 
@@ -200,7 +203,7 @@ def test_llm_exception_returns_200_and_logs_the_traceback(tmp_path, caplog):
     with TestClient(app) as client:
         with caplog.at_level(logging.INFO, logger="main"):
             reply = chat(client, session_id="boom")
-    assert reply.status_code == 200 and reply.json()["response"] == ERROR_SENTENCE
+    assert reply.status_code == 200 and reply.json() == {"response": ERROR_SENTENCE, "tool_calls": []}
     errors = [r for r in caplog.records if r.name == "main" and r.levelno == logging.ERROR]
     assert len(errors) == 1 and "boom" in errors[0].getMessage() and errors[0].exc_info
 
@@ -213,3 +216,12 @@ def test_request_log_has_no_query_text(tmp_path, caplog):
     infos = [r.getMessage() for r in caplog.records if r.name == "main" and r.levelno == logging.INFO]
     assert any(re.fullmatch(r"chat session=s1 query_chars=\d+ elapsed_ms=\d+", m) for m in infos)
     assert not any("private" in m for m in infos)
+
+
+def test_root_redirects_to_docs(tmp_path):
+    app, _ = make_app(tmp_path, {"market_data": market_data_entry()}, [AIMessage("x")])
+    with TestClient(app) as client:
+        redirect = client.get("/", follow_redirects=False)
+        followed = client.get("/")
+    assert redirect.status_code == 307 and redirect.headers["location"] == "/docs"
+    assert followed.status_code == 200 and followed.headers["content-type"].startswith("text/html")

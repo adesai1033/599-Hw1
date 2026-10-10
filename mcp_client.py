@@ -79,8 +79,10 @@ async def _discover_one(name: str, connection: dict) -> list[BaseTool] | None:
     return tools
 
 
-async def discover_tools(config: dict[str, dict]) -> tuple[list[BaseTool], dict[str, str]]:
-    """Return (tools, {failed server: description}). One dead server never blocks the others."""
+async def discover_tools(
+    config: dict[str, dict],
+) -> tuple[list[BaseTool], dict[str, str], dict[str, str]]:
+    """Return (tools, {failed server: description}, {tool name: owning server}). One dead server never blocks the others."""
     results = await asyncio.gather(*(_discover_one(name, conn) for name, conn in config.items()))
     tools: list[BaseTool] = []
     unavailable: dict[str, str] = {}
@@ -96,4 +98,4 @@ async def discover_tools(config: dict[str, dict]) -> tuple[list[BaseTool], dict[
                 )
             owner[tool.name] = name
         tools.extend(server_tools)
-    return tools, unavailable
+    return tools, unavailable, owner

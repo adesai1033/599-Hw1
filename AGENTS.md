@@ -47,7 +47,7 @@ Server manifests live in `mcp_config.json`. The path is passed to the app via
 ## Repository layout
 
 ```
-main.py              FastAPI app, /chat + /health, reads PORT (default 8080 per PDF), binds 0.0.0.0
+main.py              FastAPI app, /chat + /health, reads PORT (default 8080 per PDF), binds 0.0.0.0; response also carries tool_calls (additive to the PDF contract)
 agent.py             LangGraph graph: agent node, tools node, conditional edge, MemorySaver
 mcp_client.py        MultiServerMCPClient setup, tool discovery, transport-failure handling
 mcp_servers/
@@ -84,6 +84,8 @@ Do not violate them to "make tests pass."
 1. **Real MCP, always.** Tool discovery and invocation go through `MultiServerMCPClient`
    (`tools/list`, `tools/call`). Never stub, mock, or hard-code tool *results* in
    application code. Mocks are allowed only inside `tests/`.
+   Every `/chat` response includes a `tool_calls` trace built from the graph's messages, so
+   the real MCP invocations are visible in the response body, not only in logs.
 2. **No secrets in the repo.** API keys come from environment variables. `.env` is
    gitignored. `.env.example` has placeholders. Deployment passes keys via
    `--set-env-vars` from shell variables, never literals in `deploy.sh`.

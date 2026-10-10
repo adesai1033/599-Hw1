@@ -1,6 +1,7 @@
 """Dev REPL: python scripts/repl.py --servers market_data [--session dev1] [--log DEBUG]. Run from the repo root."""
 import argparse
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -12,7 +13,7 @@ from agent import ask, build_agent  # noqa: E402
 
 
 async def main(servers: set[str], session: str) -> None:
-    graph, unavailable, _ = await build_agent(os.environ.get("MCP_SERVERS_CONFIG", "mcp_config.json"), servers)
+    graph, unavailable, _, owner = await build_agent(os.environ.get("MCP_SERVERS_CONFIG", "mcp_config.json"), servers)
     if unavailable:
         print("servers that failed to start:", ", ".join(f"{name} ({text})" for name, text in unavailable.items()))
     while True:
@@ -21,7 +22,10 @@ async def main(servers: set[str], session: str) -> None:
         except EOFError:
             break
         if line:
-            print(await ask(graph, line, session))
+            answer, trace = await ask(graph, line, session, owner=owner)
+            print(answer)
+            for call in trace:
+                print(f"  ↳ {call['server']}.{call['tool']}({json.dumps(call['args'])}) → {call['status']}")
 
 
 if __name__ == "__main__":
