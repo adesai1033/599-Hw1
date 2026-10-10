@@ -9,11 +9,14 @@ from pathlib import Path
 from typing import Annotated
 
 import uvicorn
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, StringConstraints
 
 from agent import ask, build_agent, build_llm
+
+load_dotenv()  # local dev only: no-op in the container (.env is dockerignored) and never overrides real env vars
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s"

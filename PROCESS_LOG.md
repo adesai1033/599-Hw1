@@ -53,6 +53,13 @@ quote for ZZZZQ                   -> tool_result name=get_quote status=error cha
 - The adapter's error text for the off-schema case differed from what I expected (`ToolInvocationError ... Input should be a valid list`), so I asserted on the real wording.
 - **Live smoke test** (real keys): `/health` shows 3 servers up and 10 tools; the six-month follow-up reused TSLA and RIVN from session memory; `ZZZZQ` gave a graceful sentence with HTTP 200; a missing `session_id` gave 422.
 
+## 2026-10-10: Docker and Cloud Run (Stage 6)
+- Rewrote the Dockerfile: multi-stage, `python:3.13-slim`, non-root, no Node or `apt-get` (Tavily is HTTP now), `PYTHONUNBUFFERED=1` so logs show up in Cloud Logging. Added `.dockerignore` (keeps `.env`, tests and scripts out), `load_dotenv()` in `main.py` for local dev, and a `deploy.sh` that refuses to run if a key is unset. Image is 667 MB.
+- Installed Docker Desktop and the gcloud CLI, then tested the container locally before touching the cloud: 10 tools, three servers up, no `/app/.env`, runs as `appuser`, and a scan for `sk-` in the image came back clean.
+- **Port clash:** a leftover `vite dev` server from another project was sitting on 8080 and answering my curls with HTML, shadowing Docker's port mapping. I killed it and moved the local default from 8083 to 8080 so it matches the PDF and the container.
+- **Deployed** to Cloud Run (`csci599-a1`, `us-west1`, 1 GiB, 300 s timeout, max 1 instance): `https://csci599-a1-dvw5tijylq-uw.a.run.app`. The public smoke test passed: 10 tools, FRED used for the "stock or rates" follow-up, session memory works and `cloud2` does not see `cloud1`, `ZZZZQ` gives a graceful 200, a bad body gives 422. Tool-call traces show up in Cloud Logging.
+- **Timings:** cold start (after 17 idle minutes) was 12 s for `/health`. The first `/chat` on a fresh instance took 38 s with four tool calls, since every call spawns a subprocess; later requests took 2-10 s. Both are inside the 120 s request timeout.
+
 ## Prompting: what worked vs. what didn't
 **Worked**
 - Staged prompts, one file each, with AGENTS.md pasted first. The model stayed in scope and `market_data.py` served as the template for `fred.py`.
@@ -69,6 +76,6 @@ quote for ZZZZQ                   -> tool_result name=get_quote status=error cha
 - Bare "push" left the commit message unspecified. It's better to say the message up front.
 
 ## Still to do
-- Live-test FRED and Twelve Data on their own (FRED history ran through the agent, not standalone).
-- Dockerfile (Python-only, non-root), `deploy.sh` run, README with diagrams, cost disclosure and Tavily attribution.
-- Deploy to Cloud Run and re-run the smoke test against the public URL.
+- README with the three diagrams, setup/run/deploy, cost disclosure, Tavily attribution, and the reasons for the `fred` server, 1 GiB memory and 300 s timeout.
+- Live-test FRED and Twelve Data on their own (they have only been exercised through the agent).
+- Keep the Cloud Run service up until grades post.

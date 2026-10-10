@@ -21,7 +21,7 @@ Every tool returns live data.
 | Memory | `langgraph.checkpoint.memory.MemorySaver`, `thread_id = session_id` |
 | MCP server framework (ours) | FastMCP (`mcp` Python SDK 1.x), stdio transport |
 | MCP transports | stdio (market_data, fred), streamable HTTP (tavily) |
-| Deployment | Docker (multi-stage, non-root) → Cloud Run, `us-west1`, `--max-instances 1` |
+| Deployment | Docker (multi-stage, non-root, no Node) → Cloud Run service `csci599-a1`, `us-west1`, `--memory 1Gi --timeout 300 --max-instances 1` |
 
 ## MCP servers
 
@@ -47,7 +47,7 @@ Server manifests live in `mcp_config.json`. The path is passed to the app via
 ## Repository layout
 
 ```
-main.py              FastAPI app, /chat + /health, reads PORT (default 8080 per PDF; `.env` sets 8083 locally), binds 0.0.0.0
+main.py              FastAPI app, /chat + /health, reads PORT (default 8080 per PDF), binds 0.0.0.0
 agent.py             LangGraph graph: agent node, tools node, conditional edge, MemorySaver
 mcp_client.py        MultiServerMCPClient setup, tool discovery, transport-failure handling
 mcp_servers/

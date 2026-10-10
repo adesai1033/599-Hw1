@@ -4,6 +4,7 @@ httpx==0.28.1
 yfinance==1.7.0
 fastapi==0.143.0
 uvicorn==0.54.0
+python-dotenv==1.2.4
 langgraph==1.2.14
 langchain-openai==1.7.0
 langchain-mcp-adapters==0.3.2
