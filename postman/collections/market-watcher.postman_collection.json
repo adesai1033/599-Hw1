@@ -1,0 +1,519 @@
+{
+  "info": {
+    "name": "csci599-a1 market watcher",
+    "description": "Canonical query set from AGENTS.md against POST /chat. Run requests in order: later ones depend on session memory. A fresh session_id is generated per run unless the environment sets one.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.environment.get('session_id')) {",
+          "  pm.environment.set('session_id', 'pm-' + Date.now());",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "GET /health",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/health",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "health"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Why did NVDA drop today?",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('has non-empty response', () => pm.expect(body.response).to.be.a('string').and.not.empty);",
+              "pm.test('has tool_calls array', () => pm.expect(body.tool_calls).to.be.an('array'));",
+              "const tools = body.tool_calls.map(t => t.tool);",
+              "console.log('tool_calls:', JSON.stringify(body.tool_calls));",
+              "pm.test('called get_quote', () => pm.expect(tools).to.include('get_quote'));",
+              "pm.test('called one of [\"tavily_search\", \"get_company_news\"]', () => pm.expect(tools.some(t => [\"tavily_search\", \"get_company_news\"].includes(t))).to.be.true);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/chat",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"query\": \"Why did NVDA drop today?\",\n  \"session_id\": \"{{session_id}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Compare TSLA and RIVN over the last month",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('has non-empty response', () => pm.expect(body.response).to.be.a('string').and.not.empty);",
+              "pm.test('has tool_calls array', () => pm.expect(body.tool_calls).to.be.an('array'));",
+              "const tools = body.tool_calls.map(t => t.tool);",
+              "console.log('tool_calls:', JSON.stringify(body.tool_calls));",
+              "pm.test('called compare_performance', () => pm.expect(tools).to.include('compare_performance'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/chat",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"query\": \"Compare TSLA and RIVN over the last month\",\n  \"session_id\": \"{{session_id}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "What about six months instead? (memory)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('has non-empty response', () => pm.expect(body.response).to.be.a('string').and.not.empty);",
+              "pm.test('has tool_calls array', () => pm.expect(body.tool_calls).to.be.an('array'));",
+              "const tools = body.tool_calls.map(t => t.tool);",
+              "console.log('tool_calls:', JSON.stringify(body.tool_calls));",
+              "pm.test('called compare_performance', () => pm.expect(tools).to.include('compare_performance'));",
+              "pm.test('reused TSLA/RIVN from memory', () => {",
+              "  const args = JSON.stringify(body.tool_calls.map(t => t.args));",
+              "  pm.expect(args).to.include('TSLA'); pm.expect(args).to.include('RIVN');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/chat",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"query\": \"What about six months instead?\",\n  \"session_id\": \"{{session_id}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "What does RIVN do, and how big is it?",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('has non-empty response', () => pm.expect(body.response).to.be.a('string').and.not.empty);",
+              "pm.test('has tool_calls array', () => pm.expect(body.tool_calls).to.be.an('array'));",
+              "const tools = body.tool_calls.map(t => t.tool);",
+              "console.log('tool_calls:', JSON.stringify(body.tool_calls));",
+              "pm.test('called get_company_profile', () => pm.expect(tools).to.include('get_company_profile'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/chat",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"query\": \"What does RIVN do, and how big is it?\",\n  \"session_id\": \"{{session_id}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Is that about the stock or about rates? (fred)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('has non-empty response', () => pm.expect(body.response).to.be.a('string').and.not.empty);",
+              "pm.test('has tool_calls array', () => pm.expect(body.tool_calls).to.be.an('array'));",
+              "const tools = body.tool_calls.map(t => t.tool);",
+              "console.log('tool_calls:', JSON.stringify(body.tool_calls));",
+              "pm.test('called a fred tool', () => pm.expect(body.tool_calls.some(t => t.server === 'fred')).to.be.true);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/chat",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"query\": \"Is that about the stock or about rates?\",\n  \"session_id\": \"{{session_id}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "What's a P/E ratio? (no tool)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('has non-empty response', () => pm.expect(body.response).to.be.a('string').and.not.empty);",
+              "pm.test('has tool_calls array', () => pm.expect(body.tool_calls).to.be.an('array'));",
+              "const tools = body.tool_calls.map(t => t.tool);",
+              "console.log('tool_calls:', JSON.stringify(body.tool_calls));",
+              "pm.test('no tool calls', () => pm.expect(body.tool_calls).to.be.empty);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/chat",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"query\": \"What's a P/E ratio?\",\n  \"session_id\": \"{{session_id}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "What did I ask you first? (memory)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('has non-empty response', () => pm.expect(body.response).to.be.a('string').and.not.empty);",
+              "pm.test('has tool_calls array', () => pm.expect(body.tool_calls).to.be.an('array'));",
+              "const tools = body.tool_calls.map(t => t.tool);",
+              "console.log('tool_calls:', JSON.stringify(body.tool_calls));",
+              "pm.test('recalls first question', () => pm.expect(body.response.toLowerCase()).to.include('nvda'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/chat",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"query\": \"What did I ask you first?\",\n  \"session_id\": \"{{session_id}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Quote for ZZZZQ (tool error, graceful)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('has non-empty response', () => pm.expect(body.response).to.be.a('string').and.not.empty);",
+              "pm.test('has tool_calls array', () => pm.expect(body.tool_calls).to.be.an('array'));",
+              "const tools = body.tool_calls.map(t => t.tool);",
+              "console.log('tool_calls:', JSON.stringify(body.tool_calls));",
+              "pm.test('called get_quote', () => pm.expect(tools).to.include('get_quote'));",
+              "pm.test('tool error surfaced', () => pm.expect(body.tool_calls.some(t => t.status !== 'ok')).to.be.true);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/chat",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"query\": \"Quote for ZZZZQ\",\n  \"session_id\": \"{{session_id}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Different session does not share memory",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('has non-empty response', () => pm.expect(body.response).to.be.a('string').and.not.empty);",
+              "pm.test('has tool_calls array', () => pm.expect(body.tool_calls).to.be.an('array'));",
+              "const tools = body.tool_calls.map(t => t.tool);",
+              "console.log('tool_calls:', JSON.stringify(body.tool_calls));",
+              "pm.test('fresh session does not know NVDA', () => pm.expect(body.response.toLowerCase()).to.not.include('nvda'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/chat",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"query\": \"What did I ask you first?\",\n  \"session_id\": \"{{session_id}}-other\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Bad request: missing query -> 422",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 422', () => pm.response.to.have.status(422));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/chat",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "chat"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"session_id\": \"x\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    }
+  ]
+}
