@@ -183,94 +183,101 @@ process. A redeploy or scale-to-zero clears it.
 
 ### System architecture
 
-```mermaid
-flowchart LR
-    user([User / Postman / curl])
-
-    subgraph app["Cloud Run service csci599-a1 (one container)"]
-        api["FastAPI<br/>POST /chat · GET /health<br/>main.py"]
-        subgraph sg["LangGraph StateGraph (agent.py)"]
-            agentN["agent node<br/>llm.bind_tools(tools)"]
-            toolsN["tools node<br/>ToolNode(handle_tool_errors=True)"]
-        end
-        ckpt[("MemorySaver<br/>thread_id = session_id")]
-        client["MCP client wrapper<br/>MultiServerMCPClient<br/>mcp_client.py"]
-        md["market_data server<br/>mcp_servers/market_data.py<br/>stdio subprocess"]
-        fred["fred server<br/>mcp_servers/fred.py<br/>stdio subprocess"]
-    end
-
-    llm["OpenAI gpt-5-mini<br/>via ChatOpenAI"]
-    tavily["Tavily MCP server (hosted)<br/>mcp.tavily.com/mcp/<br/>streamable HTTP"]
-    finnhub["Finnhub · Twelve Data · yfinance"]
-    fredapi["FRED API (St. Louis Fed)"]
-
-    user -- "{query, session_id}" --> api
-    api -- "{response, tool_calls}" --> user
-    api -- "ainvoke(messages, thread_id)" --> agentN
-    agentN <-- "chat completion<br/>+ tool schemas" --> llm
-    agentN -- "tool_calls?" --> toolsN
-    toolsN -- "ToolMessages" --> agentN
-    sg <-- "checkpoint per step" --> ckpt
-    toolsN -- "tools/call" --> client
-    client -- "tools/list (startup)<br/>tools/call" --> md
-    client -- "tools/list · tools/call" --> fred
-    client -- "tools/list · tools/call<br/>Bearer TAVILY_API_KEY" --> tavily
-    md --> finnhub
-    fred --> fredapi
 ```
+                 {query, session_id}
+  User / curl / Postman ──────────────────────────────►  FastAPI  POST /chat, GET /health  (main.py)
+                        ◄──────────────────────────────  │
+                 {response, tool_calls}                  │ ainvoke(messages, thread_id=session_id)
+                                                         ▼
+  ┌───────────────────────────────── LangGraph StateGraph (agent.py) ─────────────────────────────────┐
+  │                                                                                                   │
+  │   agent node  ◄──── chat completion + tool schemas ────►  OpenAI gpt-5-mini (ChatOpenAI)          │
+  │   llm.bind_tools(tools)                                                                           │
+  │        │ tool_calls?                ▲ ToolMessages                                                │
+  │        ▼                            │                                                             │
+  │   tools node  ToolNode(handle_tool_errors=True)                                                   │
+  │        │                                                                                          │
+  │   checkpoint after every node  ◄──►  MemorySaver  (thread_id = session_id)                        │
+  └────────│──────────────────────────────────────────────────────────────────────────────────────────┘
+           │ tools/call
+           ▼
+  MCP client wrapper: MultiServerMCPClient (mcp_client.py)
+  tools/list at startup, tools/call per invocation
+           │
+           ├── stdio ──────────────►  market_data server (mcp_servers/market_data.py) ──►  Finnhub, Twelve Data, yfinance
+           │
+           ├── stdio ──────────────►  fred server (mcp_servers/fred.py) ───────────────►  FRED API (St. Louis Fed)
+           │
+           └── streamable HTTP ────►  Tavily MCP server (hosted, mcp.tavily.com/mcp/)
+               Bearer TAVILY_API_KEY   tools exposed: tavily_search, tavily_extract
+```
+
+Everything inside the box and the two stdio servers run in one Cloud Run container. OpenAI,
+Tavily, and the data providers are external. Each server's tool results come back as
+`ToolMessage`s in the same thread, so the model sees all three sources in one history.
 
 ### Tool-invocation loop
 
-```mermaid
-flowchart TD
-    q([User query<br/>+ session_id]) --> start["START<br/>load thread from MemorySaver,<br/>append HumanMessage"]
-    start --> agent["agent node (LLM reasoning)<br/>system prompt + history + tool schemas<br/>→ AIMessage"]
-    agent --> cond{"tools_condition:<br/>AIMessage has tool_calls?"}
-    cond -- "yes: tool selected<br/>(name + args from schema)" --> tools["tools node<br/>ToolNode → MultiServerMCPClient<br/>MCP tools/call request"]
-    tools --> server["MCP server executes<br/>(market_data / fred / tavily)<br/>returns result or isError"]
-    server -- "ToolMessage appended<br/>(success or error)" --> agent
-    cond -- "no: final answer" --> endN["END<br/>checkpoint saved under thread_id"]
-    endN --> resp([response + tool_calls trace])
+```
+  User query + session_id
+          │
+          ▼
+  START: load thread from MemorySaver, append HumanMessage
+          │
+          ▼
+  agent node (LLM reasoning)  ◄──────────────────────────────────┐
+  system prompt + history + tool schemas  →  AIMessage            │
+          │                                                       │
+          ▼                                                       │
+  tools_condition: does the AIMessage have tool_calls?            │
+          │                                                       │
+    yes   │   no                                                  │  LOOP-BACK
+   ┌──────┴──────┐                                                │  ToolMessage appended
+   ▼             ▼                                                │  (success or error);
+  tools node    END: checkpoint saved under thread_id             │  the LLM reasons again
+  ToolNode →      │                                               │  and may call another
+  MCP tools/call  ▼                                               │  tool or answer
+   │          response + tool_calls trace                         │
+   ▼                                                              │
+  MCP server executes (market_data / fred / tavily)               │
+  returns result or isError  ─────────────────────────────────────┘
 
-    linkStyle 5 stroke:#d33,stroke-width:3px
+  The loop runs until the LLM emits an answer with no tool_calls, or recursion_limit=25.
 ```
 
-The red edge is the loop-back. After each tool result the graph returns to the `agent`
-node, where the LLM decides whether it needs another call (for example `get_quote` →
-`get_price_history` → `tavily_search` for "why did NVDA drop today?") or has enough to
-synthesize a final answer. The loop is bounded by `recursion_limit=25`; hitting it yields
-a graceful message, not an error.
+After each tool result the graph returns to the agent node. For "why did NVDA drop today?"
+that is typically `get_quote` → `get_price_history` → `tavily_search` → final answer, three
+trips around the loop. Hitting the recursion limit yields a graceful message, not an error.
 
 ### Deployment topology
 
-```mermaid
-flowchart LR
-    subgraph local["Local development (macOS)"]
-        envfile[".env (gitignored)<br/>OPENAI_API_KEY, FINNHUB_API_KEY,<br/>TWELVEDATA_API_KEY, FRED_API_KEY,<br/>TAVILY_API_KEY"]
-        shell["shell env<br/>set -a; source .env"]
-        devapp["python main.py<br/>uvicorn on :8080<br/>+ pytest tests/"]
-        envfile --> shell --> devapp
-    end
+```
+  LOCAL DEVELOPMENT (macOS)                         GOOGLE CLOUD PROJECT
+  ─────────────────────────                         ────────────────────
 
-    subgraph gcp["Google Cloud project"]
-        build["Cloud Build<br/>gcloud builds submit --tag"]
-        reg[("Artifact Registry<br/>gcr.io/&lt;project&gt;/csci599-a1")]
-        run["Cloud Run service csci599-a1<br/>us-west1 · 1Gi · 1 vCPU<br/>timeout 300 · max-instances 1<br/>non-root container, PORT=8080"]
-        url(["Live URL<br/>csci599-a1-…-uw.a.run.app"])
-        build -- "Docker image<br/>(multi-stage, python:3.13-slim)" --> reg
-        reg -- "gcloud run deploy --image" --> run
-        run --> url
-    end
-
-    llm["OpenAI API<br/>(same backend locally and deployed)"]
-    ext["Finnhub · Twelve Data · FRED · Tavily MCP"]
-
-    shell -- "./deploy.sh" --> build
-    shell -- "--set-env-vars OPENAI_API_KEY=$OPENAI_API_KEY,…<br/>(shell variables, no literals in deploy.sh)" --> run
-    devapp --> llm
-    devapp --> ext
-    run --> llm
-    run --> ext
+  .env (gitignored)                                 Cloud Build
+    OPENAI_API_KEY                   ./deploy.sh      gcloud builds submit --tag
+    FINNHUB_API_KEY       ┌─────────────────────────►   builds Dockerfile (multi-stage,
+    TWELVEDATA_API_KEY    │                              python:3.13-slim, non-root)
+    FRED_API_KEY          │                                       │ Docker image
+    TAVILY_API_KEY        │                                       ▼
+       │                  │                               Artifact Registry
+       │ set -a;          │                               gcr.io/<project>/csci599-a1
+       │ source .env      │                                       │ gcloud run deploy --image
+       ▼                  │                                       ▼
+  shell environment ──────┤                               Cloud Run service csci599-a1
+       │                  │  --set-env-vars                 us-west1, 1Gi, 1 vCPU,
+       │                  │  OPENAI_API_KEY=$OPENAI_API_KEY, timeout 300, max-instances 1,
+       │                  └─ FINNHUB_API_KEY=$FINNHUB_... ►  PORT=8080, non-root appuser
+       ▼                     (shell variables, no                  │
+  python main.py              literals in deploy.sh)               ▼
+  uvicorn on :8080                                        Live URL
+  pytest tests/                                           https://csci599-a1-dvw5tijylq-uw.a.run.app
+       │                                                          │
+       └──────────────────────┬───────────────────────────────────┘
+                              ▼
+            Same backends from both environments:
+            OpenAI API · Finnhub · Twelve Data · FRED · Tavily MCP (hosted)
 ```
 
 Environment-variable flow: locally, `.env` is sourced into the shell and read by
@@ -278,7 +285,9 @@ Environment-variable flow: locally, `.env` is sourced into the shell and read by
 are interpolated by `deploy.sh` into `--set-env-vars`, so Cloud Run injects them into the
 container at runtime. `mcp_config.json` references them as `${FINNHUB_API_KEY}` and so on,
 and `mcp_client.py` substitutes the values when building each server's connection. No key is
-baked into the image.
+baked into the image. There is no separate local LLM: development and deployment both use
+the OpenAI API, so behaviour is identical in both places.
+
 
 ## Repository layout
 
