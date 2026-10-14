@@ -1,87 +1,21 @@
 # Process Log
 
-## 2026-10-07: Scaffold
-- Scaffolded the repo from AGENTS.md: FastAPI/agent/MCP-client stubs, `mcp_config.json` with three servers, Dockerfile, `deploy.sh`, `.env.example`, `.gitignore`, empty test files. Pushed to `main`.
-- Set up a Python 3.13 `.venv` (the system Python is 3.14) and installed `mcp`, `httpx`, `yfinance`, `pytest`, `pytest-asyncio`.
+## AI Tools Used
 
-## 2026-10-08: `market_data` server
-- Built `mcp_servers/market_data.py` with five tools: `get_quote`, `get_price_history`, `compare_performance`, `get_company_profile`, `get_company_news`. Finnhub for quotes, profiles and news; Twelve Data for history with a `yfinance` fallback.
-- The installed `mcp` is 2.x, where `FastMCP` is now `MCPServer`, so I used that.
-- 46 mocked tests pass, and the MCP Inspector lists the five tools. Checked the `yfinance` fallback with a live NVDA call.
-- Updated AGENTS.md to match this design and added `TWELVEDATA_API_KEY` to `.env.example`.
-- Fixed two scaffold bugs: `mcp_config.json` wasn't passing the Twelve Data key, and `/chat` used `message`/`answer` instead of the PDF's `query`/`response`.
+I used Claude Code (Sonnet 5.5) for development. No code was adapted from external sources.
 
-## 2026-10-09: `fred` server
-- Built `mcp_servers/fred.py` with `get_series`, `search_series` and `get_macro_snapshot`. It copies the scaffolding from `market_data.py` so each server stays standalone. Cache TTL is 1 hour.
-- Added `tests/test_fred.py`. The Inspector lists the three tools.
-- The snapshot now checks `FRED_API_KEY` before fetching, so a missing key reports "not configured" instead of "temporarily unavailable". Upstream failures now log at WARNING.
-- Full suite: 82 tests pass.
+## Development Narrative
 
-## 2026-10-09: Agent graph (Stage 3, `market_data` only)
-- Built `mcp_client.py` (config loading with `${VAR}` substitution, per-server tool discovery), `agent.py` (explicit `StateGraph`: agent -> tools -> agent loop, `MemorySaver`, `ask()`), and `scripts/repl.py`. Tavily and FRED are not wired in yet.
-- **`mcp` 2.x -> 1.x:** installing `langchain-mcp-adapters` pulled `mcp` back to 1.30. Adapters 0.3.1 doesn't import against `mcp` 2.x either, so I ported both servers back to `FastMCP` and pinned `mcp==1.30.0`. This reverses my earlier 2.x choice.
-- **Stateless MCP sessions:** each tool call spawns a fresh stdio subprocess. A server that dies mid-conversation heals on the next call. The cost is subprocess startup per call and losing the servers' in-process caches.
-- **Live bug:** Finnhub returns `d` and `dp` as `null` (not `0`) for an unknown ticker, so my numeric check fired first and `ZZZZQ` reported "Malformed" instead of "No quote found". Fixed by checking not-found first, with a regression test.
-- Added 16 graph tests, plus a `bind_tools` assertion after a review pointed out the suite would pass even if tools were never bound. I confirmed it by removing `bind_tools` and watching the test fail. Deleted the dead `tests/test_servers.py` stub. 99 tests pass.
-- **First live tool-selection trace** (`gpt-5-mini`, real `market_data` server, one session):
-```
-quote for NVDA                    -> tool_call name=get_quote args={"symbol": "NVDA"}
-what's a P/E ratio?               -> (no tool_call)
-compare TSLA and RIVN ... month   -> tool_call name=compare_performance args={"symbols": ["TSLA", "RIVN"], "period": "1m"}
-what about six months instead?    -> tool_call name=compare_performance args={"symbols": ["TSLA", "RIVN"], "period": "6m"}
-quote for ZZZZQ                   -> tool_result name=get_quote status=error chars=153
-```
-  Memory worked: the six-month follow-up reused both tickers. The `ZZZZQ` run happened before the null-field fix above, so it quoted "Malformed response".
+I started with writing my AGENTS.md. This included information on an overview of the project I'm building, the tech stack and the skeletal structure of the repo, which I finalized with Opus 5.5, and rules to follow. I referred to various AGENTS.md online, and I saw one example that divided rules into "do freely", "ask before doing", and "never do". I started the building process with the MCP servers. I planned with Opus 5.5 the tool calls the given MCP should have (what the tool call does, what it needs as inputs, and what it should output) and used this to prompt Sonnet 5.5 to code it. I used this same process for the fred and market_data MCP servers. I then built the agent with LangGraph's StateGraph, connecting an agent node to a ToolNode with tools_condition to handle tool calls and loop back. I used MemorySaver to maintain conversation state by session_id and langchain-mcp-adapters to list and call MCP tools. I then wired in Tavily. Tavily was different because I didn't build it. They host their own MCP server, so I connected over HTTP with my API key. I wrapped everything in a Docker image and deployed it to Cloud Run. I made sure to pass my API keys from the shell through --set-env-vars so nothing sensitive is leaked. I tested the container locally first, then confirmed the live URL with the same queries I'd been running against localhost. Planning with Opus 5.5 and executing with Sonnet 5.5 worked well: the detailed prompts Opus produced let Sonnet build each file quickly and correctly. But I had to read every prompt before sending it. For the error handling, Opus's prompt said in one place to drop bad values from a payload and later to treat the whole payload as malformed. My manual review caught the contradiction before Sonnet had to guess.
 
-## 2026-10-09: FRED and Tavily wired in (Stage 4)
-- Switched Tavily from the npm stdio server to the hosted **streamable HTTP** endpoint with a bearer header, so the image no longer needs Node. Added a per-server `tools` allowlist in `mcp_config.json` (a static capability choice, not query routing) so the agent only sees `tavily_search` and `tavily_extract`. Added three paragraphs to the system prompt on choosing between news tools, when to use macro data, and naming web sources.
-- **Tavily tool names:** the hosted server uses underscores (`tavily_search`), not the hyphens from the npm server. With hyphens the allowlist matched nothing and the first live run silently had no web search. The allowlist warning made it easy to spot.
-- Added a `network` pytest marker; 105 tests pass (104 offline).
-- **Live ten-query run, all three servers, 10 tools:** all ten queries matched the selection table on the second run. Highlights: `compare_performance` reused TSLA/RIVN for the six-month follow-up, "stock or rates?" called `get_macro_snapshot`, "10-year yield this year" called `get_series(DGS10, "1y")`, "big market news" called `tavily_search` and cited sources, and the P/E and "what did I ask first" queries made no tool call.
-- **Variance:** the first run reused an earlier macro snapshot for the "rates" question and asked a clarifying question for the yield query. Tool selection is not fully deterministic.
-- **Failure probes:** an invalid Tavily key is rejected at the handshake and the other servers keep working. With `fred` pointed at a missing command, startup logs one ERROR and 7 tools remain. In both cases the model invented no numbers, but it never said the data was unavailable and offered to fetch things it had no tool for, because it doesn't know a server is down.
+## Verification Narrative
 
-## 2026-10-09: Telling the model what's down (Stage 4b)
-- Each server in `mcp_config.json` now has a `description`. When discovery fails, `discover_tools` returns `{server: description}` and the system message gets one appended sentence listing what's unavailable. Before this, the model offered to fetch data it had no tool for.
-- First wording ("say plainly that the data source is unavailable") was ignored: the model filled the gap with web search and never mentioned the outage. Rewording to "begin your answer by saying plainly that this data is unavailable" worked in the live probe with `fred` broken. Prompt wording matters more than adding the information.
+After each task, I had Sonnet 5.5 write unit tests for the code that was just written. I then gave those tests to Opus 5.5 to check whether they actually caught bugs. The prompt was: "Here are the tests Sonnet wrote for agent.py. For each test, tell me what change to agent.py would make it fail. If no change would make it fail, the test isn't testing anything." This proved to be useful. One time Opus found that one of the Sonnet-written test cases would still pass even if tools were never bound to the LLM. I also used MCP Inspector to verify that each server exposed the expected tools. I used Sonnet to compare the logs against the expected tool calls for each query and make sure there were no discrepancies.
 
-## 2026-10-09: HTTP layer and failure-mode tests (Stage 5)
-- `main.py`: `create_app(config_path, llm)` factory, `POST /chat` with the PDF contract (`query`/`session_id` in, `response` out), `GET /health`, `PORT` default 8080. A missing `OPENAI_API_KEY` fails startup loudly; MCP failures never do.
-- `/chat` always returns 200 for runtime trouble: a timeout or any other exception gives a graceful sentence, and the traceback goes to the log. Bad request bodies stay 422.
-- Added two deliberately misbehaving test servers (one that exits mid-call and prints garbage, one that returns an off-schema result). The three rubric failure modes (transport, tool error, malformed response) are now proven through the real HTTP stack with a scripted LLM. 125 tests pass.
-- `build_agent` now also returns the tool names so `/health` can list them.
-- The adapter's error text for the off-schema case differed from what I expected (`ToolInvocationError ... Input should be a valid list`), so I asserted on the real wording.
-- **Live smoke test** (real keys): `/health` shows 3 servers up and 10 tools; the six-month follow-up reused TSLA and RIVN from session memory; `ZZZZQ` gave a graceful sentence with HTTP 200; a missing `session_id` gave 422.
+To test the three failure modes, I had Sonnet build two deliberately broken MCP servers in tests/servers/. One exits mid-call and prints garbage and the other returns a result that doesn't match the expected output format. I ran both through FastAPI, the real MultiServerMCPClient, and the graph rather than using mocks.
 
-## 2026-10-10: Docker and Cloud Run (Stage 6)
-- Rewrote the Dockerfile: multi-stage, `python:3.13-slim`, non-root, no Node or `apt-get` (Tavily is HTTP now), `PYTHONUNBUFFERED=1` so logs show up in Cloud Logging. Added `.dockerignore` (keeps `.env`, tests and scripts out), `load_dotenv()` in `main.py` for local dev, and a `deploy.sh` that refuses to run if a key is unset. Image is 667 MB.
-- Installed Docker Desktop and the gcloud CLI, then tested the container locally before touching the cloud: 10 tools, three servers up, no `/app/.env`, runs as `appuser`, and a scan for `sk-` in the image came back clean.
-- **Port clash:** a leftover `vite dev` server from another project was sitting on 8080 and answering my curls with HTML, shadowing Docker's port mapping. I killed it and moved the local default from 8083 to 8080 so it matches the PDF and the container.
-- **Deployed** to Cloud Run (`csci599-a1`, `us-west1`, 1 GiB, 300 s timeout, max 1 instance): `https://csci599-a1-dvw5tijylq-uw.a.run.app`. The public smoke test passed: 10 tools, FRED used for the "stock or rates" follow-up, session memory works and `cloud2` does not see `cloud1`, `ZZZZQ` gives a graceful 200, a bad body gives 422. Tool-call traces show up in Cloud Logging.
-- **Timings:** cold start (after 17 idle minutes) was 12 s for `/health`. The first `/chat` on a fresh instance took 38 s with four tool calls, since every call spawns a subprocess; later requests took 2-10 s. Both are inside the 120 s request timeout.
+Once deployed on Cloud Run, I used Postman to run queries against the live URL. I logged the HTTP status codes, the response, and the tools called.
 
-## 2026-10-09: Tool-call trace and root redirect (Stage 6b)
-- Every `/chat` response now has a `tool_calls` list of `{server, tool, args, status}`, always present and `[]` when no tool ran. It is built from the graph's messages for the current turn only, so the real MCP calls are visible in the response body and not just in logs. `discover_tools` now also returns a tool-to-server map, and `ask` returns `(text, trace)`.
-- `GET /` now redirects to `/docs` with a 307, since the bare `{"detail":"Not Found"}` page confused me when I opened the service URL.
-- Added `turn_trace` unit tests and a redirect test; 130 tests pass offline. Redeployed and checked live: the compare queries show `compare_performance` with `1m` then `6m`, the P/E query shows `[]`, and `ZZZZQ` shows a `get_quote` error followed by a `tavily_search` success.
-- The extra field is additive to the PDF contract (`query`/`response` unchanged); noted in AGENTS.md.
+## What I Learned
 
-## Prompting: what worked vs. what didn't
-**Worked**
-- Staged prompts, one file each, with AGENTS.md pasted first. The model stayed in scope and `market_data.py` served as the template for `fred.py`.
-- Exact output keys, verbatim tool docstrings, and a numbered "done when" list that mapped almost one-to-one onto tests.
-- A "run `pip show` first, use what's installed" instruction. It caught the `mcp` 2.x rename before any code was written.
-- Asking for a list of deviations at the end, which surfaced every judgment call.
-- A separate review pass, which caught real bugs: the missing Twelve Data key in `mcp_config.json` and the wrong `/chat` field names.
-
-**Didn't work**
-- My prompts assumed the wrong library API (`FastMCP`) and a different design from AGENTS.md (four tools vs. five, Finnhub-only history). I had to reconcile them mid-task and update AGENTS.md afterwards.
-- The specs contradicted themselves in places: dropping bad closes vs. calling them malformed, and "exactly one WARNING" vs. "log every failure". These got resolved by guesswork until I changed the code.
-- Soft limits like "~350 lines" were exceeded (415 and 329) without trouble, so they weren't real constraints.
-- The scaffold prompt never pointed at the assignment PDF, so the `/chat` contract was wrong until a later review.
-- Bare "push" left the commit message unspecified. It's better to say the message up front.
-
-## Still to do
-- README with the three diagrams, setup/run/deploy, cost disclosure, Tavily attribution, and the reasons for the `fred` server, 1 GiB memory and 300 s timeout.
-- Live-test FRED and Twelve Data on their own (they have only been exercised through the agent).
-- Keep the Cloud Run service up until grades post.
+AI can write code quickly and even write test cases to see whether the code written is correct, but these test cases must be taken with a grain of salt. The LLM tool binding test case was an example where I saw that a test case passed but it didn't actually catch the bug it was testing for. I also saw that AI is good at following directions but not as good at giving them. When using Claude's plan mode, the prompt would be very detailed but it did have contradictions at times. Contradicting instructions can lead to ambiguous execution (which instruction will the agent decide to follow), which is the exact type of behavior we want to avoid when writing code with AI.
