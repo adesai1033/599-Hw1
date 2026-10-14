@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
 import main
 from tests.conftest import ScriptedChatModel, call

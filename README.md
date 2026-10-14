@@ -309,6 +309,7 @@ mcp_servers/
   market_data.py     Finnhub / Twelve Data / yfinance MCP server
   fred.py            FRED MCP server
 mcp_config.json      three server manifests
+scripts/repl.py      dev REPL that drives the graph from a terminal
 tests/               pytest (graph, servers, failure modes, HTTP contract)
 postman/             canonical query collection + local and Cloud Run environments
 Dockerfile           multi-stage, non-root

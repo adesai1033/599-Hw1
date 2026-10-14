@@ -178,7 +178,7 @@ async def _build_series(series_id: str, period: str) -> dict[str, Any]:
     end = datetime.now(timezone.utc).date()
     start = end - timedelta(days=PERIOD_DAYS[period])
     body = await _fetch_fred("/series", {"series_id": series_id})
-    seriess = body.get("seriess") if isinstance(body, dict) else None
+    seriess = body.get("seriess") if isinstance(body, dict) else None  # "seriess" is FRED's own key name
     meta = seriess[0] if isinstance(seriess, list) and seriess else None
     if not isinstance(meta, dict) or not meta.get("title"):
         raise _malformed(series_id)
