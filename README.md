@@ -188,7 +188,8 @@ process. A redeploy or scale-to-zero clears it.
   User / curl / Postman ──────────────────────────────►  FastAPI  POST /chat, GET /health  (main.py)
                         ◄──────────────────────────────  │
                  {response, tool_calls}                  │ ainvoke(messages, thread_id=session_id)
-                                                         ▼
+                                                         │ ▲ final AIMessage + tool-call trace
+                                                         ▼ │
   ┌───────────────────────────────── LangGraph StateGraph (agent.py) ─────────────────────────────────┐
   │                                                                                                   │
   │   agent node  ◄──── chat completion + tool schemas ────►  OpenAI gpt-5-mini (ChatOpenAI)          │
@@ -198,18 +199,21 @@ process. A redeploy or scale-to-zero clears it.
   │   tools node  ToolNode(handle_tool_errors=True)                                                   │
   │        │                                                                                          │
   │   checkpoint after every node  ◄──►  MemorySaver  (thread_id = session_id)                        │
-  └────────│──────────────────────────────────────────────────────────────────────────────────────────┘
-           │ tools/call
-           ▼
+  └────────│──▲───────────────────────────────────────────────────────────────────────────────────────┘
+           │  │ tools/call request ▼   result or isError ▲
+           ▼  │
   MCP client wrapper: MultiServerMCPClient (mcp_client.py)
-  tools/list at startup, tools/call per invocation
+  tools/list at startup (discovery), tools/call per invocation
            │
-           ├── stdio ──────────────►  market_data server (mcp_servers/market_data.py) ──►  Finnhub, Twelve Data, yfinance
+           ├── stdio ──────────◄──►  market_data server (mcp_servers/market_data.py) ◄──►  Finnhub, Twelve Data, yfinance
            │
-           ├── stdio ──────────────►  fred server (mcp_servers/fred.py) ───────────────►  FRED API (St. Louis Fed)
+           ├── stdio ──────────◄──►  fred server (mcp_servers/fred.py) ───────────◄──►  FRED API (St. Louis Fed)
            │
-           └── streamable HTTP ────►  Tavily MCP server (hosted, mcp.tavily.com/mcp/)
+           └── streamable HTTP ◄──►  Tavily MCP server (hosted, mcp.tavily.com/mcp/)
                Bearer TAVILY_API_KEY   tools exposed: tavily_search, tavily_extract
+
+  ◄──► = request down / response up on every edge: JSON-RPC over stdio or HTTP for MCP,
+         REST for the data providers, chat completions for OpenAI.
 ```
 
 Everything inside the box and the two stdio servers run in one Cloud Run container. OpenAI,
@@ -225,22 +229,28 @@ Tavily, and the data providers are external. Each server's tool results come bac
   START: load thread from MemorySaver, append HumanMessage
           │
           ▼
-  agent node (LLM reasoning)  ◄──────────────────────────────────┐
+  agent node: LLM reasoning step  ◄──────────────────────────────┐
   system prompt + history + tool schemas  →  AIMessage            │
+  (tool selection happens here: the LLM picks a tool and args    │
+   from the schemas, or decides it has enough to answer)          │
           │                                                       │
           ▼                                                       │
   tools_condition: does the AIMessage have tool_calls?            │
           │                                                       │
     yes   │   no                                                  │  LOOP-BACK
-   ┌──────┴──────┐                                                │  ToolMessage appended
-   ▼             ▼                                                │  (success or error);
-  tools node    END: checkpoint saved under thread_id             │  the LLM reasons again
-  ToolNode →      │                                               │  and may call another
-  MCP tools/call  ▼                                               │  tool or answer
-   │          response + tool_calls trace                         │
+   ┌──────┴──────┐                                                │  ToolMessage appended;
+   ▼             ▼                                                │  back to the reasoning
+  tools node    LLM synthesis step: the last AIMessage            │  step, where the LLM
+  ToolNode →    with no tool_calls is the final answer            │  either selects another
+  MCP tools/call  │                                               │  tool or synthesizes
+   │              ▼                                               │  the final answer
+   │          END: checkpoint saved under thread_id               │
+   │              │                                               │
+   │              ▼                                               │
+   │          final response  {response, tool_calls}              │
    ▼                                                              │
   MCP server executes (market_data / fred / tavily)               │
-  returns result or isError  ─────────────────────────────────────┘
+  MCP server response: result or isError  ────────────────────────┘
 
   The loop runs until the LLM emits an answer with no tool_calls, or recursion_limit=25.
 ```
